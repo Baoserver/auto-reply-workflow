@@ -1,0 +1,225 @@
+import React, { useState, useEffect } from 'react';
+
+interface Config {
+  minimax_api_key: string;
+  minimax_group_id: string;
+  minimax_vision_model: string;
+  minimax_text_model: string;
+  feishu_webhook_url: string;
+  wechat_enabled: boolean;
+  wecom_enabled: boolean;
+  mode: 'assist' | 'auto';
+  escalation_keywords: string;
+  max_unsolved_rounds: number;
+  reply_delay_min: number;
+  reply_delay_max: number;
+}
+
+const DEFAULT_CONFIG: Config = {
+  minimax_api_key: '',
+  minimax_group_id: '',
+  minimax_vision_model: 'MiniMax-VL-01',
+  minimax_text_model: 'MiniMax-Text-01',
+  feishu_webhook_url: '',
+  wechat_enabled: true,
+  wecom_enabled: true,
+  mode: 'auto',
+  escalation_keywords: '退款,投诉,经理,报警',
+  max_unsolved_rounds: 2,
+  reply_delay_min: 1,
+  reply_delay_max: 3,
+};
+
+export default function ConfigPanel() {
+  const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
+  const [saved, setSaved] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadConfig = async () => {
+      if (!window.electronAPI) {
+        // Fallback to localStorage for development
+        const stored = localStorage.getItem('vision-cs-config');
+        if (stored) {
+          try {
+            const parsed = JSON.parse(stored);
+            setConfig({ ...DEFAULT_CONFIG, ...parsed });
+          } catch {}
+        }
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const loaded = await window.electronAPI.loadConfig();
+        if (loaded && Object.keys(loaded).length > 0) {
+          setConfig({
+            minimax_api_key: loaded.minimax?.api_key || '',
+            minimax_group_id: loaded.minimax?.group_id || '',
+            minimax_vision_model: loaded.minimax?.vision_model || 'MiniMax-VL-01',
+            minimax_text_model: loaded.minimax?.text_model || 'MiniMax-Text-01',
+            feishu_webhook_url: loaded.feishu?.webhook_url || '',
+            wechat_enabled: loaded.wechat?.enabled ?? true,
+            wecom_enabled: loaded.wecom?.enabled ?? true,
+            mode: loaded.mode || 'auto',
+            escalation_keywords: loaded.escalation?.keywords || '退款,投诉,经理,报警',
+            max_unsolved_rounds: loaded.escalation?.max_unsolved_rounds || 2,
+            reply_delay_min: loaded.reply_delay_min || 1,
+            reply_delay_max: loaded.reply_delay_max || 3,
+          });
+        }
+      } catch (e) {
+        console.error('Failed to load config:', e);
+      }
+      setLoading(false);
+    };
+
+    loadConfig();
+  }, []);
+
+  const save = async () => {
+    if (window.electronAPI) {
+      const success = await window.electronAPI.saveConfig(config);
+      if (success) {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+        return;
+      }
+    }
+
+    // Fallback to localStorage
+    localStorage.setItem('vision-cs-config', JSON.stringify(config));
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const update = (key: keyof Config, value: any) => {
+    setConfig((prev) => ({ ...prev, [key]: value }));
+  };
+
+  if (loading) {
+    return (
+      <div className="card">
+        <div className="card-title">加载中...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Model Config */}
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">MiniMax 模型</span>
+        </div>
+        <div className="form-group">
+          <label>API Key</label>
+          <input type="password" value={config.minimax_api_key}
+            onChange={(e) => update('minimax_api_key', e.target.value)}
+            placeholder="输入 API Key..." />
+        </div>
+        <div className="form-group">
+          <label>Group ID</label>
+          <input value={config.minimax_group_id}
+            onChange={(e) => update('minimax_group_id', e.target.value)}
+            placeholder="可选" />
+        </div>
+        <div className="form-group">
+          <label>视觉模型</label>
+          <select value={config.minimax_vision_model}
+            onChange={(e) => update('minimax_vision_model', e.target.value)}>
+            <option value="MiniMax-VL-01">MiniMax-VL-01</option>
+            <option value="MiniMax-M2.5">MiniMax-M2.5</option>
+          </select>
+        </div>
+        <div className="form-group">
+          <label>文本模型</label>
+          <select value={config.minimax_text_model}
+            onChange={(e) => update('minimax_text_model', e.target.value)}>
+            <option value="MiniMax-Text-01">MiniMax-Text-01</option>
+            <option value="MiniMax-M2.5">MiniMax-M2.5</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Feishu */}
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">飞书通知</span>
+        </div>
+        <div className="form-group">
+          <label>Webhook URL</label>
+          <input value={config.feishu_webhook_url}
+            onChange={(e) => update('feishu_webhook_url', e.target.value)}
+            placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." />
+        </div>
+      </div>
+
+      {/* Reply Strategy */}
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">回复策略</span>
+        </div>
+
+        <div className="form-group">
+          <label>监控渠道</label>
+          <div className="checkbox-group">
+            <label className="checkbox-label">
+              <input type="checkbox" checked={config.wechat_enabled}
+                onChange={(e) => update('wechat_enabled', e.target.checked)} />
+              微信
+            </label>
+            <label className="checkbox-label">
+              <input type="checkbox" checked={config.wecom_enabled}
+                onChange={(e) => update('wecom_enabled', e.target.checked)} />
+              企业微信
+            </label>
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label>回复模式</label>
+          <select value={config.mode} onChange={(e) => update('mode', e.target.value)}>
+            <option value="assist">辅助模式 — AI 生成建议，人工确认发送</option>
+            <option value="auto">托管模式 — AI 自动回复</option>
+          </select>
+        </div>
+
+        <div className="form-group">
+          <label>升级关键词（逗号分隔）</label>
+          <input value={config.escalation_keywords}
+            onChange={(e) => update('escalation_keywords', e.target.value)}
+            placeholder="退款,投诉,经理,报警" />
+        </div>
+
+        <div className="form-group">
+          <label>未解决轮数上限</label>
+          <input type="number" value={config.max_unsolved_rounds} min={1} max={10}
+            onChange={(e) => update('max_unsolved_rounds', parseInt(e.target.value))} />
+        </div>
+
+        <div className="form-row">
+          <div className="form-group">
+            <label>延迟下限（秒）</label>
+            <input type="number" value={config.reply_delay_min} min={0} max={10}
+              onChange={(e) => update('reply_delay_min', parseFloat(e.target.value))} />
+          </div>
+          <div className="form-group">
+            <label>延迟上限（秒）</label>
+            <input type="number" value={config.reply_delay_max} min={1} max={15}
+              onChange={(e) => update('reply_delay_max', parseFloat(e.target.value))} />
+          </div>
+        </div>
+      </div>
+
+      <button className={`btn-primary ${saved ? 'saved' : ''}`} onClick={save} style={{ width: '100%' }}>
+        {saved ? (
+          <>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 8l4 4 8-8"/></svg>
+            已保存
+          </>
+        ) : '保存配置'}
+      </button>
+    </div>
+  );
+}

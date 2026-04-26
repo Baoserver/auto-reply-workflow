@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>运营工单 AI 优化报告</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #0a0a0b;
+  --surface: #111113;
+  --surface-2: #18181b;
+  --border: rgba(255,255,255,0.06);
+  --border-hover: rgba(255,255,255,0.12);
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-muted: #52525b;
+  --accent: #10b981;
+  --accent-dim: rgba(16,185,129,0.12);
+  --accent-glow: rgba(16,185,129,0.25);
+  --red: #ef4444;
+  --red-dim: rgba(239,68,68,0.1);
+  --amber: #f59e0b;
+  --amber-dim: rgba(245,158,11,0.1);
+  --radius: 20px;
+  --radius-sm: 12px;
+  --font: 'Outfit', -apple-system, 'PingFang SC', 'Noto Sans SC', sans-serif;
+}
+
+html { scroll-behavior: smooth; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text-primary);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* Noise overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+}
+
+/* Grid background */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black 30%, transparent 100%);
+}
+
+/* ─── NAV ─── */
+nav {
+  position: fixed; top: 0; left: 0; right: 0;
+  z-index: 100;
+  padding: 16px 32px;
+  backdrop-filter: blur(20px) saturate(180%);
+  background: rgba(10,10,11,0.7);
+  border-bottom: 1px solid var(--border);
+}
+.nav-inner {
+  max-width: 1400px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.nav-brand {
+  font-weight: 700; font-size: 15px; letter-spacing: -0.02em;
+  display: flex; align-items: center; gap: 10px;
+}
+.nav-brand span {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--accent-glow);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(0.85); }
+}
+.nav-links { display: flex; gap: 32px; }
+.nav-links a {
+  color: var(--text-muted); text-decoration: none;
+  font-size: 13px; font-weight: 500;
+  transition: color 0.3s ease;
+}
+.nav-links a:hover { color: var(--text-primary); }
+
+/* ─── HERO ─── */
+.hero {
+  min-height: 100dvh;
+  display: flex; align-items: center;
+  padding: 120px 32px 80px;
+  position: relative;
+}
+.hero-inner {
+  max-width: 1400px; margin: 0 auto; width: 100%;
+  display: grid; grid-template-columns: 1.2fr 1fr; gap: 80px;
+  align-items: center;
+}
+.hero-badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 14px 6px 8px;
+  border-radius: 100px;
+  background: var(--accent-dim);
+  border: 1px solid rgba(16,185,129,0.15);
+  font-size: 12px; font-weight: 600; color: var(--accent);
+  margin-bottom: 28px;
+  animation: fade-in 0.8s ease both;
+}
+.hero-badge::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+.hero h1 {
+  font-size: clamp(2.8rem, 5.5vw, 4.5rem);
+  font-weight: 800; letter-spacing: -0.04em;
+  line-height: 1.05;
+  animation: fade-in 0.8s ease 0.1s both;
+}
+.hero h1 em {
+  font-style: normal;
+  background: linear-gradient(135deg, var(--accent) 0%, #34d399 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.hero-desc {
+  margin-top: 24px; font-size: 17px; color: var(--text-secondary);
+  line-height: 1.7; max-width: 520px;
+  animation: fade-in 0.8s ease 0.2s both;
+}
+.hero-stats {
+  display: flex; gap: 40px; margin-top: 48px;
+  animation: fade-in 0.8s ease 0.3s both;
+}
+.hero-stat-value {
+  font-size: 40px; font-weight: 800; letter-spacing: -0.04em;
+  line-height: 1;
+}
+.hero-stat-value.accent { color: var(--accent); }
+.hero-stat-label {
+  font-size: 13px; color: var(--text-muted); margin-top: 6px;
+  font-weight: 500;
+}
+
+/* Hero right side: floating cards */
+.hero-visual {
+  position: relative; height: 400px;
+  animation: fade-in 0.8s ease 0.4s both;
+}
+.float-card {
+  position: absolute; border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 20px 24px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 20px 40px -15px rgba(0,0,0,0.4);
+}
+.float-card-1 {
+  top: 0; left: 10%; width: 280px;
+  animation: float-a 6s ease-in-out infinite;
+}
+.float-card-2 {
+  top: 140px; right: 0; width: 260px;
+  animation: float-b 7s ease-in-out infinite;
+}
+.float-card-3 {
+  bottom: 0; left: 5%; width: 300px;
+  animation: float-c 8s ease-in-out infinite;
+}
+@keyframes float-a {
+  0%, 100% { transform: translateY(0) rotate(-1deg); }
+  50% { transform: translateY(-14px) rotate(0.5deg); }
+}
+@keyframes float-b {
+  0%, 100% { transform: translateY(0) rotate(1deg); }
+  50% { transform: translateY(-10px) rotate(-0.5deg); }
+}
+@keyframes float-c {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-18px); }
+}
+.float-label { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.float-value { font-size: 22px; font-weight: 700; margin-top: 6px; letter-spacing: -0.02em; }
+.float-value.green { color: var(--accent); }
+.float-sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+.float-bar { margin-top: 12px; height: 4px; border-radius: 2px; background: var(--surface-2); overflow: hidden; }
+.float-bar-fill { height: 100%; border-radius: 2px; animation: bar-grow 2s ease both; }
+@keyframes bar-grow { from { width: 0 !important; } }
+.float-bar-fill.green { background: var(--accent); }
+
+/* ─── SCENARIOS ─── */
+.scenarios {
+  padding: 40px 32px 120px;
+  max-width: 1400px; margin: 0 auto;
+}
+.section-header {
+  margin-bottom: 64px;
+}
+.section-label {
+  font-size: 12px; font-weight: 700; color: var(--accent);
+  text-transform: uppercase; letter-spacing: 0.08em;
+  margin-bottom: 12px;
+}
+.section-title {
+  font-size: clamp(1.8rem, 3.5vw, 2.8rem);
+  font-weight: 800; letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+.section-desc {
+  color: var(--text-muted); font-size: 15px; margin-top: 12px; max-width: 500px;
+}
+
+/* Scenario grid */
+.scenario-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+.scenario-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px;
+  transition: border-color 0.4s ease, transform 0.4s cubic-bezier(0.16,1,0.3,1);
+  opacity: 0; transform: translateY(30px);
+}
+.scenario-card.visible {
+  opacity: 1; transform: translateY(0);
+  transition: opacity 0.6s ease, transform 0.6s cubic-bezier(0.16,1,0.3,1), border-color 0.4s ease;
+}
+.scenario-card:hover {
+  border-color: var(--border-hover);
+  transform: translateY(-2px);
+}
+.scenario-card:nth-child(odd) { grid-column: 1; }
+.scenario-card:nth-child(even) { grid-column: 2; }
+
+.scenario-num {
+  font-size: 11px; font-weight: 700; color: var(--text-muted);
+  letter-spacing: 0.08em; margin-bottom: 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.scenario-num::after {
+  content: ''; flex: 1; height: 1px; background: var(--border);
+}
+.scenario-title {
+  font-size: 20px; font-weight: 700; letter-spacing: -0.02em;
+  margin-bottom: 20px;
+}
+.scenario-compare {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+}
+.compare-col {
+  padding: 16px;
+  border-radius: var(--radius-sm);
+}
+.compare-col.before {
+  background: var(--red-dim);
+  border: 1px solid rgba(239,68,68,0.1);
+}
+.compare-col.after {
+  background: var(--accent-dim);
+  border: 1px solid rgba(16,185,129,0.1);
+}
+.compare-tag {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 6px;
+}
+.compare-tag.red { color: var(--red); }
+.compare-tag.green { color: var(--accent); }
+.compare-tag-icon {
+  width: 14px; height: 14px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 8px;
+}
+.compare-tag-icon.red { background: rgba(239,68,68,0.2); color: var(--red); }
+.compare-tag-icon.green { background: rgba(16,185,129,0.2); color: var(--accent); }
+.compare-steps {
+  font-size: 13px; color: var(--text-secondary);
+  line-height: 1.7;
+}
+.compare-time {
+  margin-top: 12px; font-size: 13px; font-weight: 600;
+  display: flex; align-items: center; gap: 6px;
+}
+.compare-time.red { color: var(--red); }
+.compare-time.green { color: var(--accent); }
+.compare-time .value { font-size: 18px; font-weight: 800; letter-spacing: -0.02em; }
+.compare-problem {
+  margin-top: 10px; font-size: 12px; color: var(--text-muted);
+  line-height: 1.6;
+}
+.compare-problem strong { color: var(--text-secondary); font-weight: 600; }
+.compare-method {
+  margin-top: 14px; padding-top: 12px;
+  border-top: 1px solid rgba(16,185,129,0.1);
+  font-size: 11px; font-weight: 600; color: var(--accent);
+  letter-spacing: 0.02em;
+}
+
+/* ─── IMPROVEMENT BADGE ─── */
+.improve-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 10px; border-radius: 100px;
+  background: var(--accent-dim);
+  font-size: 11px; font-weight: 700; color: var(--accent);
+  margin-top: 12px;
+}
+
+/* ─── SUMMARY ─── */
+.summary {
+  padding: 80px 32px 120px;
+  max-width: 1400px; margin: 0 auto;
+}
+.summary-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  padding: 48px;
+  overflow: hidden;
+  position: relative;
+}
+.summary-card::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0.4;
+}
+.summary-grid {
+  display: grid; grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  margin-top: 36px;
+}
+.summary-item {
+  text-align: center;
+  padding: 24px 12px;
+  border-radius: var(--radius-sm);
+  transition: background 0.3s ease;
+}
+.summary-item:hover { background: var(--surface-2); }
+.summary-item-icon {
+  width: 40px; height: 40px; border-radius: 12px;
+  background: var(--accent-dim);
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 12px;
+  font-size: 16px;
+}
+.summary-item-name {
+  font-size: 13px; font-weight: 600; margin-bottom: 8px;
+  color: var(--text-secondary);
+}
+.summary-before {
+  font-size: 12px; color: var(--text-muted);
+  text-decoration: line-through;
+}
+.summary-after {
+  font-size: 22px; font-weight: 800; color: var(--accent);
+  letter-spacing: -0.02em;
+  margin-top: 4px;
+}
+.summary-uplift {
+  font-size: 11px; font-weight: 700; color: var(--accent);
+  margin-top: 6px;
+}
+
+/* ─── FOOTER ─── */
+footer {
+  padding: 40px 32px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+.footer-text {
+  font-size: 13px; color: var(--text-muted);
+  font-weight: 500;
+}
+.footer-text strong { color: var(--text-secondary); }
+
+/* ─── ANIMATIONS ─── */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── RESPONSIVE ─── */
+@media (max-width: 1024px) {
+  .hero-inner { grid-template-columns: 1fr; gap: 40px; }
+  .hero-visual { display: none; }
+  .scenario-grid { grid-template-columns: 1fr; }
+  .scenario-card:nth-child(odd),
+  .scenario-card:nth-child(even) { grid-column: 1; }
+  .summary-grid { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 640px) {
+  nav { padding: 12px 16px; }
+  .nav-links { display: none; }
+  .hero { padding: 100px 16px 60px; }
+  .hero-stats { flex-direction: column; gap: 20px; }
+  .scenarios { padding: 20px 16px 80px; }
+  .scenario-card { padding: 20px; }
+  .scenario-compare { grid-template-columns: 1fr; }
+  .summary-card { padding: 24px; }
+  .summary-grid { grid-template-columns: repeat(2, 1fr); }
+  .hero h1 { font-size: 2.2rem; }
+}
+
+/* ─── SCROLL PROGRESS ─── */
+.progress-bar {
+  position: fixed; top: 0; left: 0; z-index: 200;
+  height: 2px; background: var(--accent);
+  transform-origin: left;
+  transform: scaleX(0);
+  transition: none;
+}
+</style>
+</head>
+<body>
+
+<div class="progress-bar" id="progressBar"></div>
+
+<nav>
+  <div class="nav-inner">
+    <div class="nav-brand">
+      <span></span>
+      Operations AI Report
+    </div>
+    <div class="nav-links">
+      <a href="#scenarios">场景对比</a>
+      <a href="#summary">数据总览</a>
+    </div>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="hero-inner">
+    <div class="hero-content">
+      <div class="hero-badge">Internal Report / 2026 Q2</div>
+      <h1>运营工单流程<br><em>AI 优化报告</em></h1>
+      <p class="hero-desc">
+        覆盖商机查询、开户提取、低消配置、坐席计费、机器人判断、号码池匹配、任务跟踪 7 大高频场景。AI 介入后，每笔工单处理时间从分钟级压缩到秒级。
+      </p>
+      <div class="hero-stats">
+        <div>
+          <div class="hero-stat-value accent">7</div>
+          <div class="hero-stat-label">优化场景</div>
+        </div>
+        <div>
+          <div class="hero-stat-value accent">95%+</div>
+          <div class="hero-stat-label">平均效率提升</div>
+        </div>
+        <div>
+          <div class="hero-stat-value" style="color: var(--text-primary);">0</div>
+          <div class="hero-stat-label">人工返工</div>
+        </div>
+      </div>
+    </div>
+    <div class="hero-visual">
+      <div class="float-card float-card-1">
+        <div class="float-label">商机报备查询</div>
+        <div class="float-value green">10s</div>
+        <div class="float-sub">原 15-20 分钟</div>
+        <div class="float-bar"><div class="float-bar-fill green" style="width: 95%"></div></div>
+      </div>
+      <div class="float-card float-card-2">
+        <div class="float-label">坐席计费计算</div>
+        <div class="float-value green">3s</div>
+        <div class="float-sub">原 5-10 分钟</div>
+        <div class="float-bar"><div class="float-bar-fill green" style="width: 98%"></div></div>
+      </div>
+      <div class="float-card float-card-3">
+        <div class="float-label">工单任务跟踪</div>
+        <div class="float-value green">10s</div>
+        <div class="float-sub">自动创建 / 跟踪 / 闭环通知</div>
+        <div class="float-bar"><div class="float-bar-fill green" style="width: 96%"></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="scenarios" id="scenarios">
+  <div class="section-header">
+    <div class="section-label">Scenario Comparison</div>
+    <div class="section-title">七个核心场景，逐一对比</div>
+    <div class="section-desc">每个场景展示现有流程的痛点与 AI 优化后的实际效果。</div>
+  </div>
+
+  <div class="scenario-grid" id="scenarioGrid">
+    <!-- Cards injected by JS -->
+  </div>
+</section>
+
+<section class="summary" id="summary">
+  <div class="summary-card">
+    <div class="section-label">Data Overview</div>
+    <div class="section-title">综合效率提升一览</div>
+    <div class="summary-grid" id="summaryGrid">
+      <!-- Summary items injected by JS -->
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p class="footer-text">高频重复操作优化后效率提升 <strong>90%+</strong>，同时显著减少人工错误与返工成本</p>
+</footer>
+
+<script>
+const scenarios = [
+  {
+    num: '01',
+    title: '商机报备查询',
+    before: '打开语音客户信息表搜索客户名 → 登录玄武 CRM 进入 FGT 业务商机管理 → 两边核对销售是否一致',
+    after: '发送：「帮我查一下 XXX 公司的商机状态」→ AI 自动汇总返回',
+    timeBefore: '15-20 分钟',
+    timeAfter: '10 秒',
+    problem: '需切换多个系统，信息分散，核对耗时',
+    method: '并行查询多个系统 + AI 整合结果',
+    uplift: '90%+'
+  },
+  {
+    num: '02',
+    title: '开户信息提取',
+    before: '销售发工单 → 人工阅读整段文字 → 逐一提取客户名称、费率、供应商、号码等字段',
+    after: '转发工单 → AI 自动提取并结构化输出',
+    timeBefore: '5-8 分钟/笔',
+    timeAfter: '5 秒',
+    problem: '字段多容易遗漏、格式不统一',
+    method: 'AI 文本提取 + 格式化输出',
+    uplift: '90%+'
+  },
+  {
+    num: '03',
+    title: '月租低消配置',
+    before: '判断号码类型（手机号/固话）→ 确认月租低消档位 → 决定用 6/7/8/9 哪行 → 人工配置',
+    after: '发送：「客户办手机号，月租多少低消多少」→ AI 返回推荐行号和配置值',
+    timeBefore: '5 分钟',
+    timeAfter: '10 秒',
+    problem: '6/7/8/9 行规则复杂，易选错',
+    method: '规则引擎 + AI 推荐',
+    uplift: '95%+'
+  },
+  {
+    num: '04',
+    title: '坐席计费计算',
+    before: '调解坐席按天折算：1300元/个 x 10个 x (31-7+1)/31 = 10483.87元',
+    after: '发送：「2026年1月15日开通，计费到31日，1300元/个共10个」→ AI 自动计算并校验',
+    timeBefore: '5-10 分钟',
+    timeAfter: '3 秒',
+    problem: '跨月计算容易出错，返工成本高',
+    method: 'AI 计算器 + 公式校验',
+    uplift: '95%+'
+  },
+  {
+    num: '05',
+    title: '语音机器人类型判断',
+    before: '人工判断：纯语音通知 / 智能语音通知 / AI外呼 / 智能体 → 4 种类型混淆率高',
+    after: '发送：「客户要做 AI 外呼」→ AI 返回类型 + 开户要点 + 自动抄送相关人员',
+    timeBefore: '3-5 分钟',
+    timeAfter: '10 秒',
+    problem: '4种类型容易混淆，新人学习成本高',
+    method: 'AI 意图识别 + 类型推荐',
+    uplift: '95%+'
+  },
+  {
+    num: '06',
+    title: '号码池匹配',
+    before: '记忆各种号码池接入号：南分独享 9704837、华中独享 3682306、调解业务 8129180...',
+    after: '发送：「南京分公司客户用哪个号码池」→ AI 返回匹配结果',
+    timeBefore: '2-3 分钟',
+    timeAfter: '3 秒',
+    problem: '号码池多容易搞混',
+    method: 'RAG 知识库（长期）',
+    uplift: '95%+'
+  },
+  {
+    num: '07',
+    title: '工单任务跟踪',
+    before: '人工在飞书任务系统创建任务 → 分配负责人 → 手动跟踪完成状态',
+    after: '转发工单 → AI 自动创建任务 → 发送处理通知 → 完成后续汇总',
+    timeBefore: '3-5 分钟/笔',
+    timeAfter: '10 秒',
+    problem: '容易遗漏、流程不闭环',
+    method: '飞书 Task API + AI 自动化',
+    uplift: '95%+'
+  }
+];
+
+const icons = [
+  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>',
+  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>',
+  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>',
+  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 10h8"/><path d="M8 14h4"/><path d="M8 6h8"/></svg>',
+  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>',
+  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>',
+  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg>'
+];
+
+// Render scenarios
+const grid = document.getElementById('scenarioGrid');
+scenarios.forEach((s, i) => {
+  const card = document.createElement('div');
+  card.className = 'scenario-card';
+  card.style.transitionDelay = `${i * 80}ms`;
+  card.innerHTML = `
+    <div class="scenario-num">SCENARIO ${s.num}</div>
+    <div class="scenario-title">${s.title}</div>
+    <div class="scenario-compare">
+      <div class="compare-col before">
+        <div class="compare-tag red"><span class="compare-tag-icon red">-</span> 现有流程</div>
+        <div class="compare-steps">${s.before}</div>
+        <div class="compare-time red"><span class="value">${s.timeBefore}</span></div>
+        <div class="compare-problem"><strong>痛点：</strong>${s.problem}</div>
+      </div>
+      <div class="compare-col after">
+        <div class="compare-tag green"><span class="compare-tag-icon green">+</span> AI 优化后</div>
+        <div class="compare-steps">${s.after}</div>
+        <div class="compare-time green"><span class="value">${s.timeAfter}</span></div>
+        <div class="compare-method">${s.method}</div>
+      </div>
+    </div>
+    <div class="improve-badge">+${s.uplift}</div>
+  `;
+  grid.appendChild(card);
+});
+
+// Render summary
+const summaryGrid = document.getElementById('summaryGrid');
+scenarios.forEach((s, i) => {
+  const item = document.createElement('div');
+  item.className = 'summary-item';
+  item.innerHTML = `
+    <div class="summary-item-icon">${icons[i]}</div>
+    <div class="summary-item-name">${s.title}</div>
+    <div class="summary-before">${s.timeBefore}</div>
+    <div class="summary-after">${s.timeAfter}</div>
+    <div class="summary-uplift">+${s.uplift}</div>
+  `;
+  summaryGrid.appendChild(item);
+});
+
+// Scroll progress
+const progressBar = document.getElementById('progressBar');
+function updateProgress() {
+  const scrollTop = window.scrollY;
+  const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+  const progress = docHeight > 0 ? scrollTop / docHeight : 0;
+  progressBar.style.transform = `scaleX(${progress})`;
+}
+
+// Intersection Observer for cards
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+    }
+  });
+}, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+
+document.querySelectorAll('.scenario-card').forEach(card => observer.observe(card));
+
+window.addEventListener('scroll', updateProgress, { passive: true });
+updateProgress();
+</script>
+</body>
+</html>

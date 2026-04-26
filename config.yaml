@@ -1,0 +1,20 @@
+minimax:
+  api_key: >-
+    sk-cp-7JJv6ZF3leWojiAZ5LTTN_wGSdbKeizdibhbhd-uAalq_-fEohpd3idcynO_guVifHigDpYO1wQyfaTQfzb_t45zHuDncqvdj4P5X5Le_pFWnDYbOHVgPzY
+  group_id: ''
+  vision_model: MiniMax-VL-01
+  text_model: MiniMax-Text-01
+feishu:
+  webhook_url: ''
+wechat:
+  enabled: true
+  window_title: 微信
+wecom:
+  enabled: true
+  window_title: 企业微信
+mode: auto
+escalation:
+  keywords: 退款,投诉,经理,报警,差评
+  max_unsolved_rounds: 5
+reply_delay_min: 1
+reply_delay_max: 3

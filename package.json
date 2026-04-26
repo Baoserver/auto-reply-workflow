@@ -1,0 +1,44 @@
+{
+  "name": "vision-cs",
+  "version": "0.1.0",
+  "description": "视觉智能客服 - macOS桌面应用",
+  "main": "dist/electron/main.js",
+  "scripts": {
+    "dev": "npx tsc && npx esbuild src/App.tsx --bundle --outdir=dist --platform=browser --format=iife --jsx=automatic && electron .",
+    "bundle": "npx esbuild src/App.tsx --bundle --outdir=dist --platform=browser --format=iife --jsx=automatic",
+    "build": "npx tsc && npm run bundle && electron-builder",
+    "start": "electron ."
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "yaml": "^2.4.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.4.0"
+  },
+  "build": {
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "agent/**/*",
+      "config.yaml",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "agent/**/*",
+      "config.yaml"
+    ],
+    "mac": {
+      "target": "dir"
+    }
+  }
+}
