@@ -26,3 +26,9 @@ ocr:
     - zh-Hans
     - en
   trigger_keywords: 退货
+openclaw:
+  enabled: false
+  cli_path: /opt/homebrew/bin/openclaw
+  timeout_seconds: 120
+  extra_prompt: ''
+  routes: []

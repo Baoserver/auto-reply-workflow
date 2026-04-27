@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, ChildProcess, execFile } from 'child_process';
 import { execSync } from 'child_process';
 
 let mainWindow: BrowserWindow | null = null;
@@ -46,6 +46,7 @@ function getKnowledgeDir(): string {
 
 const CONFIG_PATH = getConfigPath();
 const KNOWLEDGE_DIR = getKnowledgeDir();
+const DEFAULT_OPENCLAW_CLI_PATH = '/opt/homebrew/bin/openclaw';
 
 function createTrayIcon() {
   const size = 16;
@@ -56,9 +57,9 @@ function createTrayIcon() {
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 430,
-    height: 780,
+    height: 900,
     minWidth: 375,
-    minHeight: 667,
+    minHeight: 800,
     show: false,
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#F5F5F7',
@@ -243,6 +244,13 @@ ipcMain.handle('save-config', async (_e, config: any) => {
         languages: ["zh-Hans", "en"],
         trigger_keywords: config.ocr_trigger_keywords || "",
       },
+      openclaw: {
+        enabled: config.openclaw_enabled ?? false,
+        cli_path: config.openclaw_cli_path || DEFAULT_OPENCLAW_CLI_PATH,
+        timeout_seconds: config.openclaw_timeout_seconds || 120,
+        extra_prompt: config.openclaw_extra_prompt || '',
+        routes: Array.isArray(config.openclaw_routes) ? config.openclaw_routes : [],
+      },
 
     };
     fs.writeFileSync(CONFIG_PATH, yaml.dump(nestedConfig), 'utf-8');
@@ -251,6 +259,56 @@ ipcMain.handle('save-config', async (_e, config: any) => {
     console.error('Failed to save config:', e);
     return false;
   }
+});
+
+// 列出 OpenClaw Agents
+ipcMain.handle('list-openclaw-agents', async () => {
+  const parseJsonArray = (raw: string) => {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      const lines = raw.split('\n').map((line) => line.trim()).filter(Boolean);
+      for (let i = 0; i < lines.length; i += 1) {
+        const candidate = lines.slice(i).join('\n');
+        if (!candidate.startsWith('[')) continue;
+        try {
+          const parsed = JSON.parse(candidate);
+          if (Array.isArray(parsed)) return parsed;
+        } catch {}
+      }
+      throw new Error('OpenClaw agents output is not JSON');
+    }
+  };
+
+  return new Promise((resolve) => {
+    execFile(
+      DEFAULT_OPENCLAW_CLI_PATH,
+      ['agents', 'list', '--json'],
+      { timeout: 30000, maxBuffer: 1024 * 1024 },
+      (error, stdout) => {
+        if (error) {
+          console.error('Failed to list OpenClaw agents:', error);
+          resolve([]);
+          return;
+        }
+
+        try {
+          const agents = parseJsonArray(stdout);
+          if (!Array.isArray(agents)) {
+            resolve([]);
+            return;
+          }
+          resolve(agents.map((agent: any) => ({
+            id: String(agent.id || ''),
+            name: String(agent.name || agent.identityName || agent.id || ''),
+          })).filter((agent: any) => agent.id));
+        } catch (e) {
+          console.error('Failed to parse OpenClaw agents:', e);
+          resolve([]);
+        }
+      },
+    );
+  });
 });
 
 // 列出知识库文件

@@ -1,5 +1,12 @@
 import React, { useState, useEffect } from 'react';
 
+interface OpenClawRoute {
+  enabled: boolean;
+  keywords: string;
+  agent_id: string;
+  agent_name: string;
+}
+
 interface Config {
   minimax_api_key: string;
   minimax_group_id: string;
@@ -17,6 +24,11 @@ interface Config {
   ocr_fast_mode: boolean;
   ocr_check_interval: number;
   ocr_trigger_keywords: string;
+  openclaw_enabled: boolean;
+  openclaw_cli_path: string;
+  openclaw_timeout_seconds: number;
+  openclaw_extra_prompt: string;
+  openclaw_routes: OpenClawRoute[];
 }
 
 const DEFAULT_CONFIG: Config = {
@@ -36,6 +48,11 @@ const DEFAULT_CONFIG: Config = {
   ocr_fast_mode: true,
   ocr_check_interval: 3,
   ocr_trigger_keywords: '怎么,如何,能不能,请问,价格,发货,退款,投诉,订单,物流,客服,帮助,问题',
+  openclaw_enabled: false,
+  openclaw_cli_path: '/opt/homebrew/bin/openclaw',
+  openclaw_timeout_seconds: 120,
+  openclaw_extra_prompt: '',
+  openclaw_routes: [],
 };
 
 export default function ConfigPanel() {
@@ -77,6 +94,18 @@ export default function ConfigPanel() {
             ocr_fast_mode: loaded.ocr?.fast_mode ?? true,
             ocr_check_interval: loaded.ocr?.check_interval || 3,
             ocr_trigger_keywords: loaded.ocr?.trigger_keywords || DEFAULT_CONFIG.ocr_trigger_keywords,
+            openclaw_enabled: loaded.openclaw?.enabled ?? false,
+            openclaw_cli_path: loaded.openclaw?.cli_path || '/opt/homebrew/bin/openclaw',
+            openclaw_timeout_seconds: loaded.openclaw?.timeout_seconds || 120,
+            openclaw_extra_prompt: loaded.openclaw?.extra_prompt || '',
+            openclaw_routes: Array.isArray(loaded.openclaw?.routes)
+              ? loaded.openclaw.routes.map((route: any) => ({
+                enabled: route.enabled ?? true,
+                keywords: Array.isArray(route.keywords) ? route.keywords.join(',') : (route.keywords || ''),
+                agent_id: route.agent_id || '',
+                agent_name: route.agent_name || '',
+              }))
+              : [],
           });
         }
       } catch (e) {
@@ -202,63 +231,6 @@ export default function ConfigPanel() {
           <input value={config.feishu_webhook_url}
             onChange={(e) => update('feishu_webhook_url', e.target.value)}
             placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." />
-        </div>
-      </div>
-
-      {/* Reply Strategy */}
-      <div className="card">
-        <div className="card-header">
-          <span className="card-title">回复策略</span>
-        </div>
-
-        <div className="form-group">
-          <label>监控渠道</label>
-          <div className="checkbox-group">
-            <label className="checkbox-label">
-              <input type="checkbox" checked={config.wechat_enabled}
-                onChange={(e) => update('wechat_enabled', e.target.checked)} />
-              微信
-            </label>
-            <label className="checkbox-label">
-              <input type="checkbox" checked={config.wecom_enabled}
-                onChange={(e) => update('wecom_enabled', e.target.checked)} />
-              企业微信
-            </label>
-          </div>
-        </div>
-
-        <div className="form-group">
-          <label>回复模式</label>
-          <select value={config.mode} onChange={(e) => update('mode', e.target.value)}>
-            <option value="assist">辅助模式 — AI 生成建议，人工确认发送</option>
-            <option value="auto">托管模式 — AI 自动回复</option>
-          </select>
-        </div>
-
-        <div className="form-group">
-          <label>升级关键词（逗号分隔）</label>
-          <input value={config.escalation_keywords}
-            onChange={(e) => update('escalation_keywords', e.target.value)}
-            placeholder="退款,投诉,经理,报警" />
-        </div>
-
-        <div className="form-group">
-          <label>未解决轮数上限</label>
-          <input type="number" value={config.max_unsolved_rounds} min={1} max={10}
-            onChange={(e) => update('max_unsolved_rounds', parseInt(e.target.value))} />
-        </div>
-
-        <div className="form-row">
-          <div className="form-group">
-            <label>延迟下限（秒）</label>
-            <input type="number" value={config.reply_delay_min} min={0} max={10}
-              onChange={(e) => update('reply_delay_min', parseFloat(e.target.value))} />
-          </div>
-          <div className="form-group">
-            <label>延迟上限（秒）</label>
-            <input type="number" value={config.reply_delay_max} min={1} max={15}
-              onChange={(e) => update('reply_delay_max', parseFloat(e.target.value))} />
-          </div>
         </div>
       </div>
 

@@ -5,6 +5,7 @@ import Dashboard from './components/Dashboard';
 import ConfigPanel from './components/ConfigPanel';
 import ChatMonitor from './components/ChatMonitor';
 import KnowledgeManager from './components/KnowledgeManager';
+import WorkflowPanel from './components/WorkflowPanel';
 
 interface AgentEvent {
   type: string;
@@ -17,11 +18,11 @@ interface Connection {
 }
 
 const TabIcon = ({ name, active }: { name: string; active: boolean }) => {
-  const color = active ? '#007AFF' : '#A1A1A6';
+  const color = active ? '#171717' : '#7B715F';
   switch (name) {
     case 'home':
       return (
-        <svg viewBox="0 0 24 24" fill={active ? '#007AFF' : 'none'} stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <svg viewBox="0 0 24 24" fill={active ? '#F7D748' : 'none'} stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
           <polyline points="9 22 9 12 15 12 15 22"/>
         </svg>
@@ -40,6 +41,17 @@ const TabIcon = ({ name, active }: { name: string; active: boolean }) => {
         <svg viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
           <circle cx="12" cy="7" r="4"/>
+        </svg>
+      );
+    case 'workflow':
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="4" width="6" height="6" rx="1.5"/>
+          <rect x="15" y="4" width="6" height="6" rx="1.5"/>
+          <rect x="9" y="15" width="6" height="6" rx="1.5"/>
+          <path d="M9 7h6"/>
+          <path d="M18 10v2a3 3 0 0 1-3 3h-3"/>
+          <path d="M6 10v2a3 3 0 0 0 3 3h3"/>
         </svg>
       );
     default:
@@ -100,6 +112,7 @@ export default function App() {
 
   const tabs = [
     { key: 'home', label: '首页', icon: 'home' },
+    { key: 'workflow', label: '工作流', icon: 'workflow' },
     { key: 'log', label: '日志', icon: 'log' },
     { key: 'me', label: '我的', icon: 'me' },
   ];
@@ -108,6 +121,8 @@ export default function App() {
     switch (tab) {
       case 'home':
         return <Dashboard running={running} stats={stats} connections={connections} events={events} />;
+      case 'workflow':
+        return <WorkflowPanel />;
       case 'log':
         return <ChatMonitor events={events} />;
       case 'me':

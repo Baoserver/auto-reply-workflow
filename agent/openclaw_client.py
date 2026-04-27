@@ -1,0 +1,196 @@
+"""OpenClaw 回复工作流客户端。"""
+
+import json
+import subprocess
+from dataclasses import dataclass
+from typing import Any
+
+
+DEFAULT_CLI_PATH = "/opt/homebrew/bin/openclaw"
+
+
+def emit_log(level: str, message: str):
+    print(json.dumps({"type": "log", "data": {"level": level, "message": message}}, ensure_ascii=False), flush=True)
+
+
+@dataclass
+class OpenClawRoute:
+    agent_id: str
+    agent_name: str
+    matched_keyword: str
+
+
+class OpenClawClient:
+    def __init__(self, config: dict):
+        cfg = config.get("openclaw", {}) or {}
+        self.enabled = bool(cfg.get("enabled", False))
+        self.cli_path = cfg.get("cli_path") or DEFAULT_CLI_PATH
+        self.timeout_seconds = int(cfg.get("timeout_seconds") or 120)
+        self.extra_prompt = cfg.get("extra_prompt", "") or ""
+        self.routes = cfg.get("routes", []) or []
+
+    def match_route(self, message: str) -> OpenClawRoute | None:
+        """按配置顺序查找第一条命中的启用路由。"""
+        if not self.enabled:
+            return None
+
+        for route in self.routes:
+            if not route or not route.get("enabled", True):
+                continue
+
+            agent_id = (route.get("agent_id") or "").strip()
+            if not agent_id:
+                continue
+
+            keywords = self._normalize_keywords(route.get("keywords"))
+            for keyword in keywords:
+                if keyword and keyword in message:
+                    return OpenClawRoute(
+                        agent_id=agent_id,
+                        agent_name=(route.get("agent_name") or agent_id).strip(),
+                        matched_keyword=keyword,
+                    )
+        return None
+
+    def generate_reply(self, message: str, channel: str, sender: str) -> str | None:
+        route = self.match_route(message)
+        if not route:
+            return None
+
+        prompt = self._build_prompt(
+            message=message,
+            channel=channel,
+            sender=sender,
+            route=route,
+        )
+        cmd = [
+            self.cli_path,
+            "agent",
+            "--agent",
+            route.agent_id,
+            "--message",
+            prompt,
+            "--json",
+            "--timeout",
+            str(self.timeout_seconds),
+        ]
+
+        emit_log("info", f"OpenClaw route matched: agent={route.agent_id}, keyword={route.matched_keyword}")
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_seconds + 10,
+            )
+        except FileNotFoundError:
+            emit_log("error", f"OpenClaw CLI not found: {self.cli_path}")
+            return None
+        except subprocess.TimeoutExpired:
+            emit_log("error", f"OpenClaw timeout after {self.timeout_seconds}s")
+            return None
+        except Exception as e:
+            emit_log("error", f"OpenClaw error: {e}")
+            return None
+
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or "").strip()
+            emit_log("error", f"OpenClaw non-zero exit {result.returncode}: {err[:500]}")
+            return None
+
+        reply = self._extract_reply(result.stdout)
+        if not reply:
+            emit_log("warn", "OpenClaw empty or unparseable reply")
+            return None
+        return reply
+
+    def _build_prompt(self, message: str, channel: str, sender: str, route: OpenClawRoute) -> str:
+        parts = [
+            "你正在作为客服回复工作流中的 OpenClaw Agent。",
+            "请只输出一段可以直接发送给客户的简体中文回复，不要输出分析过程、Markdown 标题、JSON 或代码块。",
+            "",
+            f"渠道：{channel}",
+            f"发送者：{sender}",
+            f"客户消息：{message}",
+            f"命中关键词：{route.matched_keyword}",
+            f"路由 Agent：{route.agent_name} ({route.agent_id})",
+        ]
+        if self.extra_prompt.strip():
+            parts.extend(["", "额外设定：", self.extra_prompt.strip()])
+        return "\n".join(parts)
+
+    def _extract_reply(self, output: str) -> str | None:
+        raw = output.strip()
+        if not raw:
+            return None
+
+        parsed = self._parse_json_output(raw)
+        if parsed is not None:
+            text = self._find_text(parsed)
+            if text:
+                return self._clean_reply(text)
+
+        return self._clean_reply(raw)
+
+    def _parse_json_output(self, raw: str) -> Any | None:
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                return json.loads(raw[start:end + 1])
+            except json.JSONDecodeError:
+                return None
+        return None
+
+    def _find_text(self, value: Any) -> str | None:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            for item in value:
+                found = self._find_text(item)
+                if found:
+                    return found
+            return None
+        if not isinstance(value, dict):
+            return None
+
+        preferred_keys = (
+            "reply",
+            "content",
+            "text",
+            "message",
+            "response",
+            "output",
+            "summary",
+        )
+        for key in preferred_keys:
+            found = self._find_text(value.get(key))
+            if found:
+                return found
+
+        for item in value.values():
+            found = self._find_text(item)
+            if found:
+                return found
+        return None
+
+    def _clean_reply(self, text: str) -> str | None:
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`").strip()
+        return cleaned or None
+
+    def _normalize_keywords(self, value: Any) -> list[str]:
+        if isinstance(value, list):
+            raw_items = value
+        elif isinstance(value, str):
+            raw_items = value.replace("，", ",").split(",")
+        else:
+            raw_items = []
+        return [str(item).strip() for item in raw_items if str(item).strip()]

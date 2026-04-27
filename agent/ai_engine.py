@@ -1,6 +1,7 @@
 """AI 回复引擎 — MiniMax 文本模型 + 知识库 RAG"""
 
 import httpx
+from openclaw_client import OpenClawClient
 
 
 SYSTEM_PROMPT = """你是专业的客服助手。基于提供的知识库内容回答客户问题。
@@ -19,6 +20,7 @@ class AIEngine:
         self.model = config.get("minimax", {}).get("text_model", "MiniMax-Text-01")
         self.base_url = "https://api.minimax.chat/v1/chat/completions"
         self.knowledge_context = ""
+        self.openclaw = OpenClawClient(config)
         self._load_knowledge()
 
     def _load_knowledge(self):
@@ -34,10 +36,14 @@ class AIEngine:
             texts.append(f"## {f.stem}\n{f.read_text(encoding='utf-8')}")
         self.knowledge_context = "\n\n".join(texts)
 
-    def generate_reply(self, message: str, channel: str = "微信") -> str | None:
+    def generate_reply(self, message: str, channel: str = "微信", sender: str = "未知") -> str | None:
         """
         生成回复。返回 None 表示需要升级到人工。
         """
+        openclaw_reply = self.openclaw.generate_reply(message, channel=channel, sender=sender)
+        if openclaw_reply:
+            return openclaw_reply
+
         knowledge_section = ""
         if self.knowledge_context:
             knowledge_section = f"\n\n知识库内容：\n{self.knowledge_context}"

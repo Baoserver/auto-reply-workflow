@@ -10,6 +10,7 @@ interface ElectronAPI {
   writeKnowledgeFile: (filename: string, content: string) => Promise<boolean>;
   deleteKnowledgeFile: (filename: string) => Promise<boolean>;
   checkProcess: (name: string) => Promise<boolean>;
+  listOpenClawAgents: () => Promise<{ id: string; name: string }[]>;
 }
 
 interface Window {

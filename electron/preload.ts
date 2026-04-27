@@ -18,4 +18,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteKnowledgeFile: (filename: string) =>
     ipcRenderer.invoke('delete-knowledge-file', filename),
   checkProcess: (name: string) => ipcRenderer.invoke('check-process', name),
+  listOpenClawAgents: () => ipcRenderer.invoke('list-openclaw-agents'),
 });

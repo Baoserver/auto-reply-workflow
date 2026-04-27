@@ -83,7 +83,7 @@ class Agent:
             return
 
         try:
-            reply = self.ai.generate_reply(content, channel=channel)
+            reply = self.ai.generate_reply(content, channel=channel, sender=sender)
         except Exception as e:
             print(f"[Agent] AI error: {e}", flush=True)
             reply = None
