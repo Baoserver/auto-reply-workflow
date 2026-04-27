@@ -3,7 +3,7 @@ minimax:
     sk-cp-7JJv6ZF3leWojiAZ5LTTN_wGSdbKeizdibhbhd-uAalq_-fEohpd3idcynO_guVifHigDpYO1wQyfaTQfzb_t45zHuDncqvdj4P5X5Le_pFWnDYbOHVgPzY
   group_id: ''
   vision_model: MiniMax-VL-01
-  text_model: MiniMax-Text-01
+  text_model: MiniMax-M2.5
 feishu:
   webhook_url: ''
 wechat:
@@ -21,8 +21,14 @@ reply_delay_min: 1
 reply_delay_max: 3
 ocr:
   enabled: true
-  fast_mode: true
-  check_interval: 10
+  fast_mode: false
+  check_interval: 3
+  chat_region_mode: auto
+  chat_region:
+    - 0.35
+    - 0
+    - 1
+    - 1
   languages:
     - zh-Hans
     - en

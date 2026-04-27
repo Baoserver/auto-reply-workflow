@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 interface AgentEvent {
   type: string;
@@ -10,24 +10,51 @@ interface Props {
 }
 
 export default function ChatMonitor({ events }: Props) {
+  const [tracking, setTracking] = useState(true);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!tracking || !containerRef.current) return;
+    requestAnimationFrame(() => {
+      if (!containerRef.current) return;
+      containerRef.current.scrollTo({
+        top: containerRef.current.scrollHeight,
+        behavior: 'smooth',
+      });
+    });
+  }, [events.length, tracking]);
+
+  const followButton = (
+    <button
+      className={`log-follow-btn ${tracking ? 'active' : ''}`}
+      onClick={() => setTracking((value) => !value)}
+    >
+      跟踪 {tracking ? 'ON' : 'OFF'}
+    </button>
+  );
+
   if (events.length === 0) {
     return (
-      <div className="log-empty">
-        <div className="log-empty-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
-          </svg>
+      <div className="log-panel">
+        <div className="log-empty">
+          <div className="log-empty-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+            </svg>
+          </div>
+          <div className="log-empty-text">暂无日志</div>
+          <div className="log-empty-hint">启动监控后，实时日志将在此显示</div>
         </div>
-        <div className="log-empty-text">暂无日志</div>
-        <div className="log-empty-hint">启动监控后，实时日志将在此显示</div>
+        {followButton}
       </div>
     );
   }
 
   return (
-    <div className="log-container">
-      <div className="log-timeline">
-        {events.map((ev, i) => {
+    <div className="log-panel">
+      <div className="log-container" ref={containerRef}>
+        <div className="log-timeline">
+          {events.map((ev, i) => {
           const time = new Date();
           const timeStr = `${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}:${time.getSeconds().toString().padStart(2, '0')}`;
 
@@ -217,8 +244,10 @@ export default function ChatMonitor({ events }: Props) {
           }
 
           return null;
-        })}
+          })}
+        </div>
       </div>
+      {followButton}
     </div>
   );
 }

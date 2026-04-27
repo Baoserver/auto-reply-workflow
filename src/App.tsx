@@ -39,8 +39,8 @@ const TabIcon = ({ name, active }: { name: string; active: boolean }) => {
     case 'me':
       return (
         <svg viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-          <circle cx="12" cy="7" r="4"/>
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
         </svg>
       );
     case 'workflow':
@@ -62,6 +62,8 @@ const TabIcon = ({ name, active }: { name: string; active: boolean }) => {
 export default function App() {
   const [tab, setTab] = useState<string>('home');
   const [running, setRunning] = useState(false);
+  const [logDrawerOpen, setLogDrawerOpen] = useState(false);
+  const [logDrawerFocused, setLogDrawerFocused] = useState(false);
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [stats] = useState({ messages: 128, autoReplies: 126, escalations: 2 });
   const [connections, setConnections] = useState<Connection>({ wechat: false, wecom: false });
@@ -73,6 +75,17 @@ export default function App() {
       window.electronAPI?.startAgent();
     }
   }, [running]);
+
+  const openLogDrawer = useCallback(() => {
+    setLogDrawerOpen(true);
+    setLogDrawerFocused(true);
+  }, []);
+
+  const handleAppPointerDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!logDrawerOpen) return;
+    const target = event.target as HTMLElement;
+    setLogDrawerFocused(Boolean(target.closest('.log-drawer')));
+  }, [logDrawerOpen]);
 
   useEffect(() => {
     if (!window.electronAPI) return;
@@ -110,11 +123,21 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    window.electronAPI?.setLogDrawerOpen?.(logDrawerOpen);
+    if (logDrawerOpen) {
+      setLogDrawerFocused(true);
+    }
+    return () => {
+      window.electronAPI?.setLogDrawerOpen?.(false);
+    };
+  }, [logDrawerOpen]);
+
   const tabs = [
     { key: 'home', label: '首页', icon: 'home' },
     { key: 'workflow', label: '工作流', icon: 'workflow' },
+    { key: 'me', label: '知识库', icon: 'me' },
     { key: 'log', label: '日志', icon: 'log' },
-    { key: 'me', label: '我的', icon: 'me' },
   ];
 
   const renderContent = () => {
@@ -123,8 +146,6 @@ export default function App() {
         return <Dashboard running={running} stats={stats} connections={connections} events={events} />;
       case 'workflow':
         return <WorkflowPanel />;
-      case 'log':
-        return <ChatMonitor events={events} />;
       case 'me':
         return <KnowledgeManager />;
       case 'settings':
@@ -135,7 +156,10 @@ export default function App() {
   };
 
   return (
-    <div className="app">
+    <div
+      className={`app ${logDrawerOpen ? 'log-drawer-open' : ''} ${logDrawerOpen && logDrawerFocused ? 'log-drawer-focused' : 'log-drawer-main-focused'}`}
+      onMouseDownCapture={handleAppPointerDown}
+    >
       <header className="app-header">
         {tab === 'settings' ? (
           <button className="header-back" onClick={() => setTab('home')}>
@@ -182,7 +206,7 @@ export default function App() {
                 </>
               )}
             </button>
-            <button className="action-btn secondary" onClick={() => setTab('log')}>
+            <button className="action-btn secondary" onClick={openLogDrawer}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                 <polyline points="14 2 14 8 20 8"/>
@@ -195,16 +219,39 @@ export default function App() {
             {tabs.map((t) => (
               <button
                 key={t.key}
-                className={`bottom-tab ${tab === t.key ? 'active' : ''}`}
-                onClick={() => setTab(t.key)}
+                className={`bottom-tab ${(t.key === 'log' ? logDrawerOpen : tab === t.key) ? 'active' : ''}`}
+                onClick={() => {
+                  if (t.key === 'log') {
+                    openLogDrawer();
+                    return;
+                  }
+                  setTab(t.key);
+                }}
               >
                 <div className="bottom-tab-icon">
-                  <TabIcon name={t.icon} active={tab === t.key} />
+                  <TabIcon name={t.icon} active={(t.key === 'log' ? logDrawerOpen : tab === t.key)} />
                 </div>
                 <span className="bottom-tab-label">{t.label}</span>
               </button>
             ))}
           </nav>
+
+          {logDrawerOpen && (
+            <div className="log-drawer-layer">
+              <aside className="log-drawer">
+                <div className="log-drawer-header">
+                  <span>实时日志</span>
+                  <button className="log-drawer-close" aria-label="关闭日志" onClick={() => setLogDrawerOpen(false)}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+                      <path d="M18 6L6 18"/>
+                      <path d="M6 6l12 12"/>
+                    </svg>
+                  </button>
+                </div>
+                <ChatMonitor events={events} />
+              </aside>
+            </div>
+          )}
         </>
       )}
     </div>

@@ -20,10 +20,18 @@ export default function Dashboard({ running, stats, connections, events = [] }: 
   const wechatConnected = connections?.wechat ?? false;
   const wecomConnected = connections?.wecom ?? false;
 
-  // 过滤出消息和回复
-  const messages = events.filter(e => e.type === 'message');
-  const replies = events.filter(e => e.type === 'reply');
-  const latestEvents = events.slice(-5);
+  const isRouteMatchedLog = (ev: AgentEvent) => {
+    if (ev.type !== 'log') return false;
+    const message = String(ev.data?.message || '');
+    return /命中路由|route matched/i.test(message);
+  };
+  const isKeyHomeLog = (ev: AgentEvent) => (
+    ev.type === 'vision' ||
+    ev.type === 'reply' ||
+    isRouteMatchedLog(ev)
+  );
+  const keyEvents = events.filter(isKeyHomeLog);
+  const latestEvents = keyEvents.slice(-6);
 
   const renderHomeLog = (ev: AgentEvent, index: number) => {
     const time = new Date();
@@ -84,9 +92,9 @@ export default function Dashboard({ running, stats, connections, events = [] }: 
 
     if (ev.type === 'log') {
       return (
-        <div key={index} className={`log-item log home-log-item ${ev.data.level === 'error' ? 'error' : 'warn'}`}>
+        <div key={index} className="log-item openclaw home-log-item">
           <div className="log-log-badge">
-            <span>{ev.data.level?.toUpperCase() || 'LOG'}</span>
+            <span>路由</span>
             <span>{ev.data.message}</span>
           </div>
         </div>
@@ -255,11 +263,11 @@ export default function Dashboard({ running, stats, connections, events = [] }: 
 
       <section className="home-message-board">
         <div className="home-board-header">
-          <span>最新日志</span>
-          <b>{events.length} 条事件</b>
+          <span>关键日志</span>
+          <b>{keyEvents.length} 条关键事件</b>
         </div>
         {latestEvents.length === 0 ? (
-          <div className="chat-empty">启动监控后，最新日志将在这里显示</div>
+          <div className="chat-empty">命中路由、Vision 识别和 AI 回复会显示在这里</div>
         ) : (
           <div className="home-log-timeline">
             {latestEvents.map(renderHomeLog)}

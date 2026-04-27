@@ -11,6 +11,7 @@ interface ElectronAPI {
   deleteKnowledgeFile: (filename: string) => Promise<boolean>;
   checkProcess: (name: string) => Promise<boolean>;
   listOpenClawAgents: (cliPath?: string) => Promise<{ id: string; name: string }[]>;
+  setLogDrawerOpen: (open: boolean) => void;
 }
 
 interface Window {

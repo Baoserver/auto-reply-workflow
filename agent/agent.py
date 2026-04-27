@@ -39,15 +39,20 @@ class Agent:
         self.config = load_config()
         self.running = False
         self.capture = ScreenCapture()
+        self.operator = WeChatOperator()
+        self.conversation_rounds = {}
+        self._build_runtime()
+
+    def _build_runtime(self):
         self.vision = VisionAnalyzer(self.config)
         self.ai = AIEngine(self.config)
-        self.operator = WeChatOperator()
         self.detector = WeChatDetector(self.capture, self.vision, self.config)
         self.escalation = EscalationChecker(self.config)
         self.feishu = FeishuBot(self.config)
-        self.conversation_rounds = {}
 
     def start(self):
+        if self.running:
+            return
         self.running = True
         emit("status", {"state": "running"})
         self.detector.start(self._on_new_message, self._on_assistant_workflow)
@@ -57,6 +62,21 @@ class Agent:
         self.running = False
         self.detector.stop()
         emit("status", {"state": "stopped"})
+
+    def reload_config(self):
+        was_running = self.running
+        if was_running:
+            self.detector.stop()
+
+        self.config = load_config()
+        self._build_runtime()
+
+        if was_running:
+            self.detector.start(self._on_new_message, self._on_assistant_workflow)
+            emit("status", {"state": "running"})
+
+        interval = self.config.get("ocr", {}).get("check_interval", 3)
+        emit("log", {"level": "info", "message": f"配置已重新加载，检测间隔 {interval}s"})
 
     def _on_new_message(self, channel: str, sender: str, content: str, screenshot_path: str = "", vision_result: dict = None):
         if not self.running:
@@ -212,7 +232,7 @@ def main():
                 elif action == "stop":
                     agent.stop()
                 elif action == "reload_config":
-                    agent.config = load_config()
+                    agent.reload_config()
             except (json.JSONDecodeError, KeyError):
                 pass
 

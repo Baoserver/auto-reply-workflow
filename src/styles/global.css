@@ -80,11 +80,12 @@ select:focus-visible {
   flex-direction: column;
   height: 100vh;
   height: 100dvh;
+  width: 430px;
   background: var(--bg);
   max-width: 430px;
-  margin: 0 auto;
+  margin: 0;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   border-left: 3px solid var(--border);
   border-right: 3px solid var(--border);
 }
@@ -913,6 +914,119 @@ select:focus-visible {
 }
 
 /* ========================================
+   Log Drawer
+   ======================================== */
+.log-drawer-layer {
+  position: absolute;
+  top: 0;
+  left: 100%;
+  width: 390px;
+  height: 100%;
+  z-index: 30;
+  pointer-events: none;
+}
+
+.log-drawer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 390px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-left: 4px solid var(--border);
+  box-shadow: -8px 0 0 rgba(23, 23, 23, 0.22);
+  pointer-events: auto;
+  animation: logDrawerOut 0.18s ease-out;
+  transition: filter var(--transition), opacity var(--transition);
+}
+
+.log-drawer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(23, 23, 23, 0);
+  pointer-events: none;
+  transition: background var(--transition);
+}
+
+.app.log-drawer-open.log-drawer-focused > .app-header,
+.app.log-drawer-open.log-drawer-focused > .app-content,
+.app.log-drawer-open.log-drawer-focused > .action-bar,
+.app.log-drawer-open.log-drawer-focused > .bottom-tabs {
+  filter: brightness(0.78) saturate(0.72);
+  opacity: 0.58;
+  transition: filter var(--transition), opacity var(--transition);
+}
+
+.app.log-drawer-open.log-drawer-main-focused > .log-drawer-layer .log-drawer {
+  filter: brightness(0.72) saturate(0.68);
+  opacity: 0.74;
+}
+
+.app.log-drawer-open.log-drawer-main-focused > .log-drawer-layer .log-drawer::after {
+  background: rgba(23, 23, 23, 0.22);
+}
+
+.log-drawer-header {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--yellow);
+  border-bottom: 3px solid var(--border);
+  font-size: 18px;
+  font-weight: 900;
+  color: var(--text);
+}
+
+.log-drawer-close {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  color: var(--text);
+  border: 3px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 2px 2px 0 var(--border);
+  cursor: pointer;
+}
+
+.log-drawer-close svg {
+  width: 17px;
+  height: 17px;
+}
+
+.log-drawer .log-panel {
+  flex: 1;
+  min-height: 0;
+}
+
+.log-drawer .log-container,
+.log-drawer .log-empty {
+  padding: 14px 12px 92px;
+}
+
+.log-drawer .log-item {
+  max-width: 100%;
+}
+
+@keyframes logDrawerOut {
+  from {
+    transform: translateX(-18px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* ========================================
    Form Elements
    ======================================== */
 .form-group {
@@ -1208,6 +1322,34 @@ select:focus-visible {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+}
+
+.log-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.log-follow-btn {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 3;
+  padding: 9px 12px;
+  border: 3px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 3px 3px 0 var(--border);
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.log-follow-btn.active {
+  background: var(--green-dim);
 }
 
 .log-timeline {

@@ -30,6 +30,8 @@ interface Config {
   ocr_enabled: boolean;
   ocr_fast_mode: boolean;
   ocr_check_interval: number;
+  ocr_chat_region_mode: 'auto' | 'fixed';
+  ocr_chat_region: number[];
   ocr_trigger_keywords: string;
   openclaw_enabled: boolean;
   openclaw_cli_path: string;
@@ -55,6 +57,8 @@ const DEFAULT_CONFIG: Config = {
   ocr_enabled: true,
   ocr_fast_mode: true,
   ocr_check_interval: 3,
+  ocr_chat_region_mode: 'auto',
+  ocr_chat_region: [0.35, 0, 1, 1],
   ocr_trigger_keywords: '怎么,如何,能不能,请问,价格,发货,退款,投诉,订单,物流,客服,帮助,问题',
   openclaw_enabled: false,
   openclaw_cli_path: '/opt/homebrew/bin/openclaw',
@@ -81,6 +85,8 @@ function flattenConfig(loaded: any): Config {
     ocr_enabled: loaded.ocr?.enabled ?? true,
     ocr_fast_mode: loaded.ocr?.fast_mode ?? true,
     ocr_check_interval: loaded.ocr?.check_interval || 3,
+    ocr_chat_region_mode: loaded.ocr?.chat_region_mode || 'auto',
+    ocr_chat_region: Array.isArray(loaded.ocr?.chat_region) ? loaded.ocr.chat_region : [0.35, 0, 1, 1],
     ocr_trigger_keywords: loaded.ocr?.trigger_keywords || DEFAULT_CONFIG.ocr_trigger_keywords,
     openclaw_enabled: loaded.openclaw?.enabled ?? false,
     openclaw_cli_path: loaded.openclaw?.cli_path || '/opt/homebrew/bin/openclaw',

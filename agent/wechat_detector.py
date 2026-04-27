@@ -22,6 +22,7 @@ SYSTEM_PATTERNS = [
     "开启了群聊邀请", "关闭了群聊邀请", "修改了群聊名称",
     "以上是历史消息", "Messages to this chat",
     "你已添加了", "现在可以开始聊天",
+    "快速会议",
 ]
 
 # 自身发送者名称（避免循环）
@@ -71,6 +72,7 @@ class WeChatDetector:
                     if kw and kw not in self.trigger_keywords:
                         self.trigger_keywords.append(kw)
         # 聊天区域裁剪 (left_ratio, top_ratio, right_ratio, bottom_ratio)，默认取右 65%
+        self.chat_region_mode = ocr_cfg.get("chat_region_mode", "auto")
         region_cfg = ocr_cfg.get("chat_region", [0.35, 0.0, 1.0, 1.0])
         self.chat_region = tuple(region_cfg) if region_cfg else None
         self._first_check_logged = set()
@@ -147,9 +149,15 @@ class WeChatDetector:
 
             if self.local_ocr.enabled:
                 try:
-                    ocr_image = self._crop_chat_region(screenshot_path)
+                    ocr_image, crop_mode, crop_box = self._crop_chat_region(screenshot_path)
                     vision_image_path = ocr_image
-                    ocr_text = self.local_ocr.extract_text_string(ocr_image)
+                    with Image.open(ocr_image) as img:
+                        emit_log(
+                            "info",
+                            f"[{window_name}] OCR裁剪图: {os.path.basename(ocr_image)} "
+                            f"({img.size[0]}x{img.size[1]}), mode={crop_mode}, box={crop_box}",
+                        )
+                    ocr_text = self._extract_ocr_text_without_watermark(ocr_image, window_name)
                     if ocr_text:
                         new_lines = self._diff_new_lines(state.ocr_text, ocr_text)
                         emit_log("info", f"[{window_name}] OCR提取 {len(ocr_text)} 字符，新增 {len(new_lines)} 行")
@@ -181,8 +189,14 @@ class WeChatDetector:
                     self._maybe_cleanup_screenshot(screenshot_path)
                     continue
 
-                combined_text = "\n".join(meaningful_lines)
-                msg_hash = hashlib.md5(combined_text.encode("utf-8")).hexdigest()
+                last_message = self._last_meaningful_line(new_lines)
+                if not last_message:
+                    emit_log("info", f"[{window_name}] 未找到最后有效消息，跳过")
+                    self._maybe_cleanup_screenshot(screenshot_path)
+                    continue
+
+                emit_log("info", f"[{window_name}] OCR最后有效消息: {last_message}")
+                msg_hash = hashlib.md5(last_message.encode("utf-8")).hexdigest()
                 if msg_hash in self._processed_hashes:
                     emit_log("info", f"[{window_name}] 重复消息，跳过")
                     self._maybe_cleanup_screenshot(screenshot_path)
@@ -193,15 +207,15 @@ class WeChatDetector:
                         window_name=window_name,
                         screenshot_path=screenshot_path,
                         vision_image_path=vision_image_path,
-                        meaningful_lines=meaningful_lines,
+                        last_message=last_message,
                         dedup_key=msg_hash,
                         assistant_callback=assistant_callback,
                     )
                     continue
 
                 # 触发词检查
-                if self.trigger_keywords and not self._match_trigger(meaningful_lines):
-                    emit_log("info", f"[{window_name}] 未命中触发词，跳过视觉API: {meaningful_lines[:3]}")
+                if self.trigger_keywords and not self._match_trigger(last_message):
+                    emit_log("info", f"[{window_name}] 最后有效消息未命中触发词，跳过视觉API: {last_message}")
                     self._maybe_cleanup_screenshot(screenshot_path)
                     continue
 
@@ -243,14 +257,13 @@ class WeChatDetector:
         window_name: str,
         screenshot_path: str,
         vision_image_path: str,
-        meaningful_lines: list[str],
+        last_message: str,
         dedup_key: str,
         assistant_callback,
     ):
-        route_text = "\n".join(meaningful_lines)
-        route = self.openclaw.match_route(route_text)
+        route = self.openclaw.match_route(last_message)
         if not route:
-            emit_log("info", f"[{window_name}] 助手模式未命中 OpenClaw 路由，跳过: {meaningful_lines[:3]}")
+            emit_log("info", f"[{window_name}] 助手模式最后有效消息未命中 OpenClaw 路由，跳过: {last_message}")
             self._maybe_cleanup_screenshot(screenshot_path)
             return
 
@@ -275,7 +288,7 @@ class WeChatDetector:
             emit("vision", {"window": window_name, "result": result})
             emit_log("info", f"[{window_name}] Vision识别结果: {json.dumps(self._summarize_vision_result(result), ensure_ascii=False)}")
 
-            handled = assistant_callback(window_name, route, route_text, screenshot_path, result)
+            handled = assistant_callback(window_name, route, last_message, screenshot_path, result)
             if handled:
                 self._processed_hashes.append(dedup_key)
                 if len(self._processed_hashes) > self._max_dedup:
@@ -306,11 +319,32 @@ class WeChatDetector:
             return True
         return False
 
-    def _match_trigger(self, lines: list[str]) -> bool:
-        """检查新增内容是否命中触发词，命中返回 True"""
-        combined = "".join(lines)
+    def _last_meaningful_line(self, lines: list[str]) -> str:
+        for line in reversed(lines):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if self._is_system_message(stripped):
+                continue
+            if self._is_time_like_line(stripped):
+                continue
+            return stripped
+        return ""
+
+    def _is_time_like_line(self, text: str) -> bool:
+        stripped = text.strip().strip("|")
+        if re.fullmatch(r"\d{1,2}:\d{2}", stripped):
+            return True
+        if re.fullmatch(r"(今天|昨天|前天)?\s*\d{1,2}:\d{2}", stripped):
+            return True
+        if re.fullmatch(r"\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?", stripped):
+            return True
+        return False
+
+    def _match_trigger(self, text: str) -> bool:
+        """检查最后有效消息是否命中触发词，命中返回 True"""
         for kw in self.trigger_keywords:
-            if kw in combined:
+            if kw in text:
                 return True
         return False
 
@@ -342,16 +376,6 @@ class WeChatDetector:
         return isinstance(recent_messages, list) and len(recent_messages) > 0
 
     def _maybe_cleanup_screenshot(self, path: str, keep: bool = False):
-        if keep:
-            cleanup_screenshots_dir()
-            return
-        try:
-            p = os.path.normpath(path)
-            chat_p = p.replace(".png", "_chat.png")
-            if os.path.exists(chat_p) and "screenshots" in chat_p:
-                os.unlink(chat_p)
-        except Exception:
-            pass
         cleanup_screenshots_dir()
 
     def _cleanup_old_files(self):
@@ -365,15 +389,269 @@ class WeChatDetector:
             h.update(f.read())
         return h.hexdigest()
 
-    def _crop_chat_region(self, image_path: str) -> str:
-        if not self.chat_region:
-            return image_path
+    def _crop_chat_region(self, image_path: str) -> tuple[str, str, tuple[int, int, int, int]]:
         img = Image.open(image_path)
         w, h = img.size
+        if not self.chat_region:
+            return image_path, "full", (0, 0, w, h)
+
+        crop_box = None
+        crop_mode = "fixed"
+        if self.chat_region_mode == "auto":
+            crop_box, crop_mode = self._detect_chat_region(image_path, img, w, h)
+            if crop_box:
+                pass
+
+        if not crop_box:
+            crop_box = self._fixed_chat_region_box(w, h)
+            crop_mode = "fallback_fixed" if self.chat_region_mode == "auto" else "fixed"
+
+        return self._crop_region(image_path, crop_box, crop_mode)
+
+    def _fixed_chat_region_box(self, width: int, height: int) -> tuple[int, int, int, int]:
         left, top, right, bottom = self.chat_region
-        box = (int(left * w), int(top * h), int(right * w), int(bottom * h))
+        return (
+            int(left * width),
+            int(top * height),
+            int(right * width),
+            int(bottom * height),
+        )
+
+    def _detect_chat_region(self, image_path: str, img: Image.Image, width: int, height: int) -> tuple[tuple[int, int, int, int] | None, str]:
+        lines = self.local_ocr.extract_text(image_path)
+        candidates = []
+        for line in lines:
+            text = line.text.strip()
+            if not text:
+                continue
+            x1 = float(line.x)
+            y1 = float(line.y)
+            x2 = x1 + float(line.width)
+            y2 = y1 + float(line.height)
+            if y2 < 0.05 or y1 > 0.94:
+                continue
+            if x2 < 0.10:
+                continue
+            if line.width < 0.006 or line.height < 0.006:
+                continue
+            candidates.append(line)
+
+        separator_x = self._detect_vertical_separator(img)
+        if separator_x is not None:
+            left = min(width - 1, separator_x + 8)
+            box = (left, 0, width, height)
+            if self._is_valid_auto_box(box, width, height) and self._has_right_side_text(candidates, left / width):
+                return box, "auto_separator"
+
+        if len(candidates) < 8:
+            return None, "auto_ocr_gap"
+
+        boundary = self._infer_chat_left_boundary(candidates)
+        if boundary is None:
+            return None, "auto_ocr_gap"
+
+        left = int(max(0, min(0.62, boundary - 0.015)) * width)
+        box = (left, 0, width, height)
+        if not self._is_valid_auto_box(box, width, height):
+            return None, "auto_ocr_gap"
+        return box, "auto_ocr_gap"
+
+    def _detect_vertical_separator(self, img: Image.Image) -> int | None:
+        rgb = img.convert("RGB")
+        width, height = rgb.size
+        x_start = int(width * 0.18)
+        x_end = int(width * 0.45)
+        y_start = int(height * 0.08)
+        y_end = int(height * 0.92)
+        if x_end <= x_start or y_end <= y_start:
+            return None
+
+        candidates = []
+        for x in range(x_start, x_end):
+            score, coverage = self._vertical_separator_score(rgb, x, y_start, y_end)
+            if coverage < 0.32:
+                continue
+            if score < 28:
+                continue
+            candidates.append((score * coverage, score, coverage, x))
+
+        if not candidates:
+            return None
+
+        high_confidence = [(x, score) for _, score, coverage, x in candidates if coverage >= 0.75 and score >= 35]
+        if high_confidence:
+            return self._pick_separator_from_high_confidence(high_confidence)
+
+        candidates.sort(reverse=True)
+        for _, _, _, x in candidates[:12]:
+            if self._is_stable_separator(rgb, x, y_start, y_end):
+                return x
+        return None
+
+    @staticmethod
+    def _pick_separator_from_high_confidence(candidates: list[tuple[int, float]]) -> int:
+        candidates.sort()
+        groups: list[list[tuple[int, float]]] = []
+        for item in candidates:
+            if not groups or item[0] - groups[-1][-1][0] > 12:
+                groups.append([item])
+            else:
+                groups[-1].append(item)
+
+        best_group = max(groups, key=lambda group: (len(group), sum(score for _, score in group) / len(group)))
+        return max(x for x, _ in best_group)
+
+    @staticmethod
+    def _vertical_separator_score(img: Image.Image, x: int, y_start: int, y_end: int) -> tuple[float, float]:
+        total = 0.0
+        hits = 0
+        samples = 0
+        width, _ = img.size
+        left_x = max(0, x - 3)
+        right_x = min(width - 1, x + 3)
+        for y in range(y_start, y_end, 6):
+            left = img.getpixel((left_x, y))
+            right = img.getpixel((right_x, y))
+            diff = sum(abs(left[i] - right[i]) for i in range(3))
+            total += diff
+            if diff >= 24:
+                hits += 1
+            samples += 1
+        if samples == 0:
+            return 0.0, 0.0
+        return total / samples, hits / samples
+
+    @staticmethod
+    def _is_stable_separator(img: Image.Image, x: int, y_start: int, y_end: int) -> bool:
+        width, _ = img.size
+        left_x = max(0, x - 8)
+        right_x = min(width - 1, x + 8)
+        stable_hits = 0
+        samples = 0
+        for y in range(y_start, y_end, 10):
+            left = img.getpixel((left_x, y))
+            right = img.getpixel((right_x, y))
+            diff = sum(abs(left[i] - right[i]) for i in range(3))
+            if diff >= 18:
+                stable_hits += 1
+            samples += 1
+        return samples > 0 and stable_hits / samples >= 0.25
+
+    @staticmethod
+    def _has_right_side_text(lines, boundary: float) -> bool:
+        return sum(1 for line in lines if line.x >= boundary and 0.06 <= line.y <= 0.92) >= 4
+
+    def _infer_chat_left_boundary(self, lines) -> float | None:
+        starts = sorted(line.x for line in lines if 0.12 <= line.x <= 0.70)
+        if len(starts) < 8:
+            return None
+
+        best_gap = None
+        for i in range(len(starts) - 1):
+            left = starts[i]
+            right = starts[i + 1]
+            gap = right - left
+            midpoint = (left + right) / 2
+            if not 0.24 <= midpoint <= 0.52:
+                continue
+            left_count = sum(1 for x in starts if x <= left)
+            right_count = sum(1 for x in starts if x >= right)
+            if left_count < 5 or right_count < 4:
+                continue
+            if gap < 0.025:
+                continue
+            if best_gap is None or gap > best_gap[0]:
+                best_gap = (gap, midpoint)
+
+        if best_gap:
+            return best_gap[1]
+
+        left_panel = [
+            line.x + line.width
+            for line in lines
+            if 0.10 <= line.x <= 0.34 and line.x + line.width <= 0.38
+        ]
+        right_side_count = sum(1 for line in lines if line.x >= 0.34)
+        if len(left_panel) >= 5 and right_side_count >= 4:
+            return min(max(left_panel) + 0.02, 0.52)
+        return None
+
+    @staticmethod
+    def _is_valid_auto_box(box: tuple[int, int, int, int], width: int, height: int) -> bool:
+        left, top, right, bottom = box
+        box_width = right - left
+        box_height = bottom - top
+        if box_width < max(320, int(width * 0.36)):
+            return False
+        if box_height < max(360, int(height * 0.55)):
+            return False
+        if left < int(width * 0.18):
+            return False
+        if left > int(width * 0.65):
+            return False
+        return True
+
+    def _extract_ocr_text_without_watermark(self, image_path: str, window_name: str) -> str:
+        lines = self.local_ocr.extract_text(image_path)
+        if not lines:
+            return ""
+
+        with Image.open(image_path) as img:
+            rgb = img.convert("RGB")
+            kept = []
+            removed = []
+            for line in lines:
+                text = line.text.strip()
+                if not text:
+                    continue
+                if self._is_system_message(text):
+                    continue
+                if self._is_low_contrast_watermark_line(rgb, line):
+                    removed.append(text)
+                    continue
+                kept.append(text)
+
+        if removed:
+            emit_log("info", f"[{window_name}] OCR过滤水印 {len(removed)} 行: {removed[:5]}")
+        return "\n".join(kept)
+
+    @staticmethod
+    def _is_low_contrast_watermark_line(img: Image.Image, line) -> bool:
+        width, height = img.size
+        x1 = max(0, int(line.x * width) - 2)
+        x2 = min(width, int((line.x + line.width) * width) + 2)
+        # Vision OCR uses a bottom-left origin; PIL uses top-left.
+        y1 = max(0, int((1 - line.y - line.height) * height) - 2)
+        y2 = min(height, int((1 - line.y) * height) + 2)
+        if x2 <= x1 or y2 <= y1:
+            return False
+
+        total = 0
+        dark = 0
+        very_dark = 0
+        min_luminance = 255.0
+        for y in range(y1, y2):
+            for x in range(x1, x2):
+                r, g, b = img.getpixel((x, y))
+                luminance = (r + g + b) / 3
+                min_luminance = min(min_luminance, luminance)
+                if luminance < 170:
+                    dark += 1
+                if luminance < 120:
+                    very_dark += 1
+                total += 1
+
+        if total == 0:
+            return False
+
+        dark_ratio = dark / total
+        very_dark_ratio = very_dark / total
+        return min_luminance >= 150 and dark_ratio < 0.035 and very_dark_ratio < 0.01
+
+    def _crop_region(self, image_path: str, box: tuple[int, int, int, int], mode: str) -> tuple[str, str, tuple[int, int, int, int]]:
+        img = Image.open(image_path)
         cropped = img.crop(box)
         cropped_path = image_path.replace(".png", "_chat.png")
         cropped.save(cropped_path, "PNG")
         cleanup_screenshots_dir()
-        return cropped_path
+        return cropped_path, mode, box

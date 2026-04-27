@@ -9,6 +9,9 @@ let tray: Tray | null = null;
 let agentProcess: ChildProcess | null = null;
 
 let LOG_FILE: string;
+const APP_WIDTH = 430;
+const APP_HEIGHT = 900;
+const LOG_DRAWER_WIDTH = 390;
 
 function log(msg: string) {
   if (!LOG_FILE) {
@@ -55,14 +58,12 @@ function createTrayIcon() {
 }
 
 function createWindow() {
-  const width = 430;
-  const height = 900;
   const { workArea } = screen.getPrimaryDisplay();
 
   mainWindow = new BrowserWindow({
-    width,
-    height,
-    x: workArea.x + workArea.width - width,
+    width: APP_WIDTH,
+    height: APP_HEIGHT,
+    x: workArea.x + workArea.width - APP_WIDTH,
     y: workArea.y,
     minWidth: 375,
     minHeight: 800,
@@ -83,6 +84,19 @@ function createWindow() {
     stopAgent();
     mainWindow = null;
   });
+}
+
+function setLogDrawerOpen(open: boolean) {
+  if (!mainWindow) return;
+  const { workArea } = screen.getDisplayMatching(mainWindow.getBounds());
+  const targetWidth = open ? APP_WIDTH + LOG_DRAWER_WIDTH : APP_WIDTH;
+  const targetHeight = Math.max(mainWindow.getBounds().height, 800);
+  mainWindow.setBounds({
+    x: workArea.x + workArea.width - targetWidth,
+    y: workArea.y,
+    width: targetWidth,
+    height: targetHeight,
+  }, true);
 }
 
 function createTray() {
@@ -223,6 +237,9 @@ ipcMain.on('agent-stop', () => stopAgent());
 ipcMain.on('agent-command', (_e, cmd: string) => {
   agentProcess?.stdin?.write(JSON.stringify({ action: cmd }) + '\n');
 });
+ipcMain.on('log-drawer-open', (_e, open: boolean) => {
+  setLogDrawerOpen(open);
+});
 
 // 读取配置
 ipcMain.handle('load-config', async () => {
@@ -273,6 +290,8 @@ ipcMain.handle('save-config', async (_e, config: any) => {
         enabled: config.ocr_enabled ?? true,
         fast_mode: config.ocr_fast_mode ?? true,
         check_interval: config.ocr_check_interval || 3,
+        chat_region_mode: config.ocr_chat_region_mode || 'auto',
+        chat_region: Array.isArray(config.ocr_chat_region) ? config.ocr_chat_region : [0.35, 0.0, 1.0, 1.0],
         languages: ["zh-Hans", "en"],
         trigger_keywords: config.ocr_trigger_keywords || "",
       },
@@ -286,6 +305,9 @@ ipcMain.handle('save-config', async (_e, config: any) => {
 
     };
     fs.writeFileSync(CONFIG_PATH, yaml.dump(nestedConfig), 'utf-8');
+    if (agentProcess?.stdin?.writable) {
+      agentProcess.stdin.write(JSON.stringify({ action: 'reload_config' }) + '\n');
+    }
     return true;
   } catch (e) {
     console.error('Failed to save config:', e);
