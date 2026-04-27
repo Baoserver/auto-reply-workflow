@@ -23,113 +23,249 @@ export default function Dashboard({ running, stats, connections, events = [] }: 
   // 过滤出消息和回复
   const messages = events.filter(e => e.type === 'message');
   const replies = events.filter(e => e.type === 'reply');
+  const latestEvents = events.slice(-5);
+
+  const renderHomeLog = (ev: AgentEvent, index: number) => {
+    const time = new Date();
+    const timeStr = `${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}:${time.getSeconds().toString().padStart(2, '0')}`;
+
+    if (ev.type === 'message') {
+      const isWechat = ev.data.channel === '微信';
+      return (
+        <div key={index} className="log-item received home-log-item">
+          <div className="log-bubble">
+            <div className="log-source">
+              <span className={`log-tag ${isWechat ? 'wechat' : 'wecom'}`}>
+                {isWechat ? '微信' : '企微'}
+              </span>
+              <span className="log-sender">{ev.data.sender}</span>
+            </div>
+            <div className="log-text">{ev.data.content}</div>
+          </div>
+          <div className="log-time">{timeStr}</div>
+        </div>
+      );
+    }
+
+    if (ev.type === 'reply') {
+      return (
+        <div key={index} className="log-item sent home-log-item">
+          <div className="log-bubble ai">
+            <div className="log-source">
+              <span className="log-tag ai">AI</span>
+            </div>
+            <div className="log-text">{ev.data.content}</div>
+          </div>
+          <div className="log-time">{timeStr}</div>
+        </div>
+      );
+    }
+
+    if (ev.type === 'status') {
+      return (
+        <div key={index} className="log-item system home-log-item">
+          <div className="log-system-badge">
+            <span className="log-status-icon">●</span>
+            <span>{ev.data.state === 'running' ? '服务已启动' : '服务已停止'}</span>
+          </div>
+        </div>
+      );
+    }
+
+    if (ev.type === 'escalation') {
+      return (
+        <div key={index} className="log-item escalation home-log-item">
+          <div className="log-escalation-badge">
+            <span>转人工: {ev.data.reason}</span>
+          </div>
+        </div>
+      );
+    }
+
+    if (ev.type === 'log') {
+      return (
+        <div key={index} className={`log-item log home-log-item ${ev.data.level === 'error' ? 'error' : 'warn'}`}>
+          <div className="log-log-badge">
+            <span>{ev.data.level?.toUpperCase() || 'LOG'}</span>
+            <span>{ev.data.message}</span>
+          </div>
+        </div>
+      );
+    }
+
+    if (ev.type === 'ocr') {
+      const lines: string[] = ev.data.new_lines || [];
+      const windowName = ev.data.window || '';
+      return (
+        <div key={index} className="log-item ocr home-log-item">
+          <div className="log-ocr-badge">
+            <div className="log-ocr-header">
+              <span className="log-tag ocr">OCR</span>
+              <span className="log-ocr-window">{windowName}</span>
+              <span className="log-ocr-count">{lines.length} 行新内容</span>
+            </div>
+            {lines.length > 0 && (
+              <div className="log-ocr-lines">
+                {lines.map((line: string, li: number) => (
+                  <div key={li} className="log-ocr-line">{line}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    if (ev.type === 'vision') {
+      const r = ev.data.result || {};
+      const windowName = ev.data.window || '';
+      const msg = r.latest_message || {};
+      const recentMessages = Array.isArray(r.recent_messages) ? r.recent_messages : [];
+      const conversationText = r.conversation_text || '';
+      const visibleText = r.visible_text || '';
+      const isAssistantMode = r.workflow_mode === 'assistant';
+      return (
+        <div key={index} className="log-item vision home-log-item">
+          <div className="log-ocr-badge">
+            <div className="log-ocr-header">
+              <span className="log-tag vision">Vision</span>
+              <span className="log-ocr-window">{windowName}</span>
+              <span className="log-ocr-count">
+                {isAssistantMode ? '完整上下文' : (r.has_new_message ? '新消息' : '无新消息')}
+              </span>
+            </div>
+            <div className="log-ocr-lines">
+              {isAssistantMode && r.matched_keyword && (
+                <div className="log-ocr-line">命中关键词: {r.matched_keyword}</div>
+              )}
+              {isAssistantMode && r.route_agent && (
+                <div className="log-ocr-line">路由 Agent: {r.route_agent.name || r.route_agent.id}</div>
+              )}
+              {msg.sender && <div className="log-ocr-line">发送者: {msg.sender}</div>}
+              {msg.content && <div className="log-ocr-line">内容: {msg.content}</div>}
+              {recentMessages.length > 0 && (
+                <>
+                  <div className="log-ocr-line log-vision-section">最近对话</div>
+                  {recentMessages.slice(-8).map((item: any, mi: number) => (
+                    <div key={mi} className="log-ocr-line">
+                      {(item.sender || (item.is_self ? '我方' : '客户'))}: {item.content || ''}
+                    </div>
+                  ))}
+                </>
+              )}
+              {conversationText && (
+                <>
+                  <div className="log-ocr-line log-vision-section">对话摘要</div>
+                  <div className="log-ocr-line">{conversationText}</div>
+                </>
+              )}
+              {visibleText && (
+                <>
+                  <div className="log-ocr-line log-vision-section">可见文字</div>
+                  <div className="log-ocr-line">{visibleText}</div>
+                </>
+              )}
+              {r.input_box && <div className="log-ocr-line">输入框: [{r.input_box.join(', ')}]</div>}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (ev.type === 'openclaw') {
+      const parsed = ev.data.parsed ? JSON.stringify(ev.data.parsed, null, 2) : '';
+      return (
+        <div key={index} className="log-item openclaw home-log-item">
+          <div className="log-ocr-badge">
+            <div className="log-ocr-header">
+              <span className="log-tag openclaw">OpenClaw</span>
+              <span className="log-ocr-window">{ev.data.agent_name || ev.data.agent_id}</span>
+              <span className="log-ocr-count">{ev.data.matched_keyword || '返回'}</span>
+            </div>
+            <div className="log-ocr-lines">
+              {ev.data.reply && (
+                <>
+                  <div className="log-ocr-line log-vision-section">最终回复</div>
+                  <div className="log-ocr-line">{ev.data.reply}</div>
+                </>
+              )}
+              {parsed && (
+                <>
+                  <div className="log-ocr-line log-vision-section">解析 JSON</div>
+                  <pre className="log-json-line">{parsed}</pre>
+                </>
+              )}
+              {ev.data.stdout && (
+                <>
+                  <div className="log-ocr-line log-vision-section">STDOUT</div>
+                  <pre className="log-json-line">{ev.data.stdout}</pre>
+                </>
+              )}
+              {ev.data.stderr && (
+                <>
+                  <div className="log-ocr-line log-vision-section">STDERR</div>
+                  <pre className="log-json-line">{ev.data.stderr}</pre>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  };
 
   return (
     <div className="dashboard">
-      {/* Top Cards Row */}
-      <div className="top-cards-row">
-        {/* Connection Card - Left */}
-        <div className="card connection-card">
-          <div className="card-label">设备连接</div>
-          <div className="connection-list">
-            <div className="connection-item">
-              <div className="connection-icon wechat-icon">
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M8.5 11a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/>
-                </svg>
-              </div>
-              <span className="connection-name">微信</span>
-              <span className={`status-badge ${wechatConnected ? 'online' : 'offline'}`}>
-                {wechatConnected ? '已连接' : '未连接'}
-              </span>
-            </div>
-            <div className="connection-item">
-              <div className="connection-icon wecom-icon">
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
-                </svg>
-              </div>
-              <span className="connection-name">企业微信</span>
-              <span className={`status-badge ${wecomConnected ? 'online' : 'offline'}`}>
-                {wecomConnected ? '已连接' : '未连接'}
-              </span>
-            </div>
+      <section className={`home-hero ${running ? 'is-running' : 'is-paused'}`}>
+        <div>
+          <div className="home-kicker">AUTO REPLY OPS</div>
+          <h1>{running ? '托管运行中' : '等待启动'}</h1>
+          <p>{running ? '正在监听窗口变化、OCR 与回复链路。' : '点击底部按钮开始识别微信与企业微信。'}</p>
+        </div>
+        <div className="home-hero-stamp">
+          <span>{running ? 'ON' : 'OFF'}</span>
+        </div>
+      </section>
+
+      <section className="home-matrix">
+        <div className="home-metric hero-metric">
+          <span className="home-metric-label">今日回复</span>
+          <strong>{stats.messages}</strong>
+          <small>自动回复率 {replyRate}%</small>
+        </div>
+        <div className="home-metric">
+          <span className="home-metric-label">转人工</span>
+          <strong>{stats.escalations}</strong>
+          <small>{stats.escalations > 0 ? '需要关注' : '暂无积压'}</small>
+        </div>
+        <div className="home-channel-card">
+          <div className="home-channel-title">设备连接</div>
+          <div className="home-channel-row">
+            <span>微信</span>
+            <b className={wechatConnected ? 'online' : 'offline'}>{wechatConnected ? '已连接' : '未连接'}</b>
+          </div>
+          <div className="home-channel-row">
+            <span>企业微信</span>
+            <b className={wecomConnected ? 'online' : 'offline'}>{wecomConnected ? '已连接' : '未连接'}</b>
           </div>
         </div>
+      </section>
 
-        {/* Stats Card - Right */}
-        <div className="card stats-card">
-          <div className="card-label">今日数据</div>
-          <div className="stats-row">
-            <div className="stat-item">
-              <span className="stat-value" style={{ color: '#007AFF' }}>{stats.messages}</span>
-              <span className="stat-label">回复次数</span>
-            </div>
-            <div className="stat-item">
-              <span className="stat-value" style={{ color: '#34C759' }}>{replyRate}%</span>
-              <span className="stat-label">自动回复率</span>
-            </div>
-            <div className="stat-item">
-              <span className="stat-value" style={{ color: stats.escalations > 0 ? '#FF9500' : '#A1A1A6' }}>{stats.escalations}</span>
-              <span className="stat-label">转人工</span>
-            </div>
-          </div>
+      <section className="home-message-board">
+        <div className="home-board-header">
+          <span>最新日志</span>
+          <b>{events.length} 条事件</b>
         </div>
-      </div>
-
-      {/* Chat Card */}
-      <div className="card chat-card">
-        <div className="chat-container">
-          {/* Left - Channel Messages */}
-          <div className="chat-left">
-            <div className="chat-section-title">渠道消息</div>
-            {messages.length === 0 ? (
-              <div className="chat-empty">暂无消息</div>
-            ) : (
-              messages.slice(-5).map((msg, i) => (
-                <div key={i} className="chat-bubble received">
-                  <span className={`bubble-source ${msg.data.channel === '企业微信' ? 'wecom' : 'wechat'}`}>
-                    {msg.data.channel === '企业微信' ? '企微' : '微信'}
-                  </span>
-                  <span className="bubble-text">{msg.data.content}</span>
-                </div>
-              ))
-            )}
+        {latestEvents.length === 0 ? (
+          <div className="chat-empty">启动监控后，最新日志将在这里显示</div>
+        ) : (
+          <div className="home-log-timeline">
+            {latestEvents.map(renderHomeLog)}
           </div>
-
-          {/* Right - AI Replies */}
-          <div className="chat-right">
-            <div className="chat-section-title">AI 处理</div>
-            {replies.length === 0 ? (
-              <div className="chat-empty">暂无回复</div>
-            ) : (
-              replies.slice(-5).map((reply, i) => (
-                <div key={i} className="chat-bubble sent">
-                  <span className="bubble-text">{reply.data.content}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Info Card */}
-      <div className="card info-card">
-        <div className="info-row-inner">
-          <div className="info-item">
-            <span className="info-label">连接</span>
-            <span className={`info-value ${running ? 'online' : ''}`}>{running ? '正常' : '断开'}</span>
-          </div>
-          <div className="info-item">
-            <span className="info-label">消息</span>
-            <span className="info-value">{messages.length}</span>
-          </div>
-          <div className="info-item">
-            <span className="info-label">回复</span>
-            <span className="info-value">{replies.length}</span>
-          </div>
-        </div>
-      </div>
+        )}
+      </section>
     </div>
   );
 }

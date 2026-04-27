@@ -36,11 +36,11 @@ class AIEngine:
             texts.append(f"## {f.stem}\n{f.read_text(encoding='utf-8')}")
         self.knowledge_context = "\n\n".join(texts)
 
-    def generate_reply(self, message: str, channel: str = "微信", sender: str = "未知") -> str | None:
+    def generate_reply(self, message: str, channel: str = "微信", sender: str = "未知", context: str = "") -> str | None:
         """
         生成回复。返回 None 表示需要升级到人工。
         """
-        openclaw_reply = self.openclaw.generate_reply(message, channel=channel, sender=sender)
+        openclaw_reply = self.openclaw.generate_reply(message, channel=channel, sender=sender, context=context)
         if openclaw_reply:
             return openclaw_reply
 
@@ -49,11 +49,18 @@ class AIEngine:
             knowledge_section = f"\n\n知识库内容：\n{self.knowledge_context}"
 
         headers = {"Authorization": f"Bearer {self.api_key}"}
+        user_content = f"客户通过{channel}发来最新消息：{message}"
+        if context.strip():
+            user_content = (
+                f"客户通过{channel}发来最新消息：{message}\n\n"
+                f"以下是视觉识别出的当前可见对话上下文，仅用于理解语境；请优先回复最新客户消息：\n{context.strip()}"
+            )
+
         payload = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT + knowledge_section},
-                {"role": "user", "content": f"客户通过{channel}发来消息：{message}"},
+                {"role": "user", "content": user_content},
             ],
             "temperature": 0.3,
             "max_tokens": 300,

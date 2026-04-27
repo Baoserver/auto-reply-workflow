@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage } from 'electron';
+import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { spawn, ChildProcess, execFile } from 'child_process';
@@ -55,9 +55,15 @@ function createTrayIcon() {
 }
 
 function createWindow() {
+  const width = 430;
+  const height = 900;
+  const { workArea } = screen.getPrimaryDisplay();
+
   mainWindow = new BrowserWindow({
-    width: 430,
-    height: 900,
+    width,
+    height,
+    x: workArea.x + workArea.width - width,
+    y: workArea.y,
     minWidth: 375,
     minHeight: 800,
     show: false,
@@ -134,16 +140,37 @@ function startAgent() {
     return;
   }
 
+  let stdoutBuffer = '';
+  const handleStdoutLine = (line: string) => {
+    if (!line.trim()) return;
+    try {
+      const event = JSON.parse(line);
+      const logPayload = event?.type === 'openclaw'
+        ? JSON.stringify({
+          type: event.type,
+          data: {
+            agent_id: event.data?.agent_id,
+            agent_name: event.data?.agent_name,
+            matched_keyword: event.data?.matched_keyword,
+            reply: event.data?.reply,
+            stdout_length: event.data?.stdout?.length || 0,
+            stderr_length: event.data?.stderr?.length || 0,
+          },
+        })
+        : JSON.stringify(event);
+      log(`AGENT EVENT: ${logPayload}`);
+      mainWindow?.webContents.send('agent-event', event);
+    } catch (e) {
+      log(`PARSE ERROR: ${line} ${e}`);
+    }
+  };
+
   agentProcess.stdout?.on('data', (data: Buffer) => {
-    const lines = data.toString().split('\n').filter(Boolean);
+    stdoutBuffer += data.toString();
+    const lines = stdoutBuffer.split('\n');
+    stdoutBuffer = lines.pop() || '';
     for (const line of lines) {
-      try {
-        const event = JSON.parse(line);
-        log(`AGENT EVENT: ${JSON.stringify(event)}`);
-        mainWindow?.webContents.send('agent-event', event);
-      } catch (e) {
-        log(`PARSE ERROR: ${line} ${e}`);
-      }
+      handleStdoutLine(line);
     }
   });
 
@@ -164,6 +191,10 @@ function startAgent() {
   });
 
   agentProcess.on('close', (code) => {
+    if (stdoutBuffer.trim()) {
+      handleStdoutLine(stdoutBuffer);
+      stdoutBuffer = '';
+    }
     log(`AGENT CLOSE: ${code}`);
     agentProcess = null;
   });
@@ -229,6 +260,7 @@ ipcMain.handle('save-config', async (_e, config: any) => {
         enabled: config.wecom_enabled ?? true,
         window_title: '企业微信',
       },
+      workflow_mode: config.workflow_mode || 'customer',
       mode: config.mode || 'auto',
       escalation: {
         keywords: config.escalation_keywords || '退款,投诉,经理,报警',
@@ -262,27 +294,34 @@ ipcMain.handle('save-config', async (_e, config: any) => {
 });
 
 // 列出 OpenClaw Agents
-ipcMain.handle('list-openclaw-agents', async () => {
+ipcMain.handle('list-openclaw-agents', async (_e, cliPath?: string) => {
   const parseJsonArray = (raw: string) => {
+    const clean = raw.replace(/\x1b\[[0-9;]*m/g, '');
     try {
-      return JSON.parse(raw);
+      return JSON.parse(clean);
     } catch {
-      const lines = raw.split('\n').map((line) => line.trim()).filter(Boolean);
-      for (let i = 0; i < lines.length; i += 1) {
-        const candidate = lines.slice(i).join('\n');
-        if (!candidate.startsWith('[')) continue;
-        try {
-          const parsed = JSON.parse(candidate);
-          if (Array.isArray(parsed)) return parsed;
-        } catch {}
+      const lines = clean.split('\n');
+      for (let start = 0; start < lines.length; start += 1) {
+        const trimmed = lines[start].trim();
+        if (trimmed !== '[' && !trimmed.startsWith('[{')) continue;
+        for (let end = lines.length - 1; end >= start; end -= 1) {
+          const endTrimmed = lines[end].trim();
+          if (endTrimmed !== ']' && !endTrimmed.endsWith(']')) continue;
+          try {
+            const parsed = JSON.parse(lines.slice(start, end + 1).join('\n'));
+            if (Array.isArray(parsed)) return parsed;
+          } catch {}
+          break;
+        }
       }
       throw new Error('OpenClaw agents output is not JSON');
     }
   };
+  const resolvedCliPath = cliPath?.trim() || DEFAULT_OPENCLAW_CLI_PATH;
 
   return new Promise((resolve) => {
     execFile(
-      DEFAULT_OPENCLAW_CLI_PATH,
+      resolvedCliPath,
       ['agents', 'list', '--json'],
       { timeout: 30000, maxBuffer: 1024 * 1024 },
       (error, stdout) => {

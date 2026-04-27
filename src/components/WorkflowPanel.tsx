@@ -5,6 +5,7 @@ interface OpenClawRoute {
   keywords: string;
   agent_id: string;
   agent_name: string;
+  extra_prompt: string;
 }
 
 interface OpenClawAgent {
@@ -20,6 +21,7 @@ interface Config {
   feishu_webhook_url: string;
   wechat_enabled: boolean;
   wecom_enabled: boolean;
+  workflow_mode: 'customer' | 'assistant';
   mode: 'assist' | 'auto';
   escalation_keywords: string;
   max_unsolved_rounds: number;
@@ -44,6 +46,7 @@ const DEFAULT_CONFIG: Config = {
   feishu_webhook_url: '',
   wechat_enabled: true,
   wecom_enabled: true,
+  workflow_mode: 'customer',
   mode: 'auto',
   escalation_keywords: '退款,投诉,经理,报警',
   max_unsolved_rounds: 2,
@@ -69,6 +72,7 @@ function flattenConfig(loaded: any): Config {
     feishu_webhook_url: loaded.feishu?.webhook_url || '',
     wechat_enabled: loaded.wechat?.enabled ?? true,
     wecom_enabled: loaded.wecom?.enabled ?? true,
+    workflow_mode: loaded.workflow_mode || 'customer',
     mode: loaded.mode || 'auto',
     escalation_keywords: loaded.escalation?.keywords || '退款,投诉,经理,报警',
     max_unsolved_rounds: loaded.escalation?.max_unsolved_rounds || 2,
@@ -88,6 +92,7 @@ function flattenConfig(loaded: any): Config {
         keywords: Array.isArray(route.keywords) ? route.keywords.join(',') : (route.keywords || ''),
         agent_id: route.agent_id || '',
         agent_name: route.agent_name || '',
+        extra_prompt: route.extra_prompt || '',
       }))
       : [],
   };
@@ -97,9 +102,24 @@ export default function WorkflowPanel() {
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [agentsLoading, setAgentsLoading] = useState(false);
   const [openClawAgents, setOpenClawAgents] = useState<OpenClawAgent[]>([]);
 
   useEffect(() => {
+    const loadAgents = async (cliPath = DEFAULT_CONFIG.openclaw_cli_path) => {
+      if (!window.electronAPI?.listOpenClawAgents) return;
+      setAgentsLoading(true);
+      try {
+        const agents = await window.electronAPI.listOpenClawAgents(cliPath);
+        setOpenClawAgents(agents || []);
+      } catch (e) {
+        console.error('Failed to load OpenClaw agents:', e);
+        setOpenClawAgents([]);
+      } finally {
+        setAgentsLoading(false);
+      }
+    };
+
     const loadConfig = async () => {
       if (!window.electronAPI) {
         const stored = localStorage.getItem('vision-cs-config');
@@ -115,30 +135,20 @@ export default function WorkflowPanel() {
       try {
         const loaded = await window.electronAPI.loadConfig();
         if (loaded && Object.keys(loaded).length > 0) {
-          setConfig(flattenConfig(loaded));
+          const flattened = flattenConfig(loaded);
+          setConfig(flattened);
+          loadAgents(flattened.openclaw_cli_path);
+        } else {
+          loadAgents();
         }
       } catch (e) {
         console.error('Failed to load workflow config:', e);
+        loadAgents();
       }
       setLoading(false);
     };
 
     loadConfig();
-  }, []);
-
-  useEffect(() => {
-    const loadAgents = async () => {
-      if (!window.electronAPI?.listOpenClawAgents) return;
-      try {
-        const agents = await window.electronAPI.listOpenClawAgents();
-        setOpenClawAgents(agents || []);
-      } catch (e) {
-        console.error('Failed to load OpenClaw agents:', e);
-        setOpenClawAgents([]);
-      }
-    };
-
-    loadAgents();
   }, []);
 
   const save = async () => {
@@ -171,6 +181,7 @@ export default function WorkflowPanel() {
           keywords: '',
           agent_id: firstAgent?.id || '',
           agent_name: firstAgent?.name || '',
+          extra_prompt: '',
         },
       ],
     }));
@@ -198,6 +209,20 @@ export default function WorkflowPanel() {
       agent_id: agentId,
       agent_name: agent?.name || '',
     });
+  };
+
+  const refreshOpenClawAgents = async () => {
+    if (!window.electronAPI?.listOpenClawAgents) return;
+    setAgentsLoading(true);
+    try {
+      const agents = await window.electronAPI.listOpenClawAgents(config.openclaw_cli_path);
+      setOpenClawAgents(agents || []);
+    } catch (e) {
+      console.error('Failed to refresh OpenClaw agents:', e);
+      setOpenClawAgents([]);
+    } finally {
+      setAgentsLoading(false);
+    }
   };
 
   if (loading) {
@@ -232,27 +257,37 @@ export default function WorkflowPanel() {
         </div>
 
         <div className="form-group">
-          <label>回复模式</label>
-          <select value={config.mode} onChange={(e) => update('mode', e.target.value)}>
-            <option value="assist">辅助模式 — AI 生成建议，人工确认发送</option>
-            <option value="auto">托管模式 — AI 自动回复</option>
+          <label>工作模式</label>
+          <select value={config.workflow_mode} onChange={(e) => update('workflow_mode', e.target.value)}>
+            <option value="customer">客服模式 — 识别客户新消息并回复</option>
+            <option value="assistant">助手模式 — 关键词触发完整上下文工作流</option>
           </select>
         </div>
 
-        <div className="form-group">
-          <label>升级关键词（逗号分隔）</label>
-          <input value={config.escalation_keywords}
-            onChange={(e) => update('escalation_keywords', e.target.value)}
-            placeholder="退款,投诉,经理,报警" />
-        </div>
+        {config.workflow_mode === 'customer' && (
+          <>
+            <div className="form-group">
+              <label>回复模式</label>
+              <select value={config.mode} onChange={(e) => update('mode', e.target.value)}>
+                <option value="assist">辅助模式 — AI 生成建议，人工确认发送</option>
+                <option value="auto">托管模式 — AI 自动回复</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>升级关键词（逗号分隔）</label>
+              <input value={config.escalation_keywords}
+                onChange={(e) => update('escalation_keywords', e.target.value)}
+                placeholder="退款,投诉,经理,报警" />
+            </div>
+            <div className="form-group">
+              <label>未解决轮数上限</label>
+              <input type="number" value={config.max_unsolved_rounds} min={1} max={10}
+                onChange={(e) => update('max_unsolved_rounds', parseInt(e.target.value) || 2)} />
+            </div>
+          </>
+        )}
 
-        <div className="form-group">
-          <label>未解决轮数上限</label>
-          <input type="number" value={config.max_unsolved_rounds} min={1} max={10}
-            onChange={(e) => update('max_unsolved_rounds', parseInt(e.target.value) || 2)} />
-        </div>
-
-        <div className="form-row">
+        {config.workflow_mode === 'customer' && <div className="form-row">
           <div className="form-group">
             <label>延迟下限（秒）</label>
             <input type="number" value={config.reply_delay_min} min={0} max={10}
@@ -263,14 +298,14 @@ export default function WorkflowPanel() {
             <input type="number" value={config.reply_delay_max} min={1} max={15}
               onChange={(e) => update('reply_delay_max', parseFloat(e.target.value) || 3)} />
           </div>
-        </div>
+        </div>}
       </div>
 
       <div className="card">
         <div className="card-header">
           <span className="card-title">OpenClaw 工作流</span>
           <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
-            {openClawAgents.length > 0 ? `${openClawAgents.length} 个 Agent` : '可手动输入 Agent ID'}
+            {agentsLoading ? '读取 Agent 中...' : (openClawAgents.length > 0 ? `${openClawAgents.length} 个 Agent` : '可手动输入 Agent ID')}
           </span>
         </div>
         <div className="form-group">
@@ -288,6 +323,9 @@ export default function WorkflowPanel() {
           <input value={config.openclaw_cli_path}
             onChange={(e) => update('openclaw_cli_path', e.target.value)}
             placeholder="/opt/homebrew/bin/openclaw" />
+          <button className="btn-sm" onClick={refreshOpenClawAgents} style={{ marginTop: 10 }}>
+            {agentsLoading ? '刷新中...' : '刷新 Agent 列表'}
+          </button>
         </div>
         <div className="form-group">
           <label>超时时间（秒）</label>
@@ -300,13 +338,6 @@ export default function WorkflowPanel() {
             onChange={(e) => update('openclaw_extra_prompt', e.target.value)}
             placeholder="例如：回复需简洁、语气友好，遇到价格争议提醒人工确认。" />
         </div>
-
-        <datalist id="openclaw-agent-options">
-          {openClawAgents.map((agent) => (
-            <option key={agent.id} value={agent.id}>{agent.name}</option>
-          ))}
-        </datalist>
-
         <div className="form-group">
           <label>关键词路由</label>
           {config.openclaw_routes.length === 0 ? (
@@ -336,17 +367,47 @@ export default function WorkflowPanel() {
                       onChange={(e) => updateOpenClawRoute(index, { keywords: e.target.value })}
                       placeholder="退款,发票,招聘" />
                   </div>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label>OpenClaw Agent ID</label>
+                  <div className="form-group" style={{ marginBottom: 8 }}>
+                    <label>选择 OpenClaw Agent</label>
+                    {openClawAgents.length > 0 ? (
+                      <div className="agent-choice-list">
+                        {openClawAgents.map((agent) => {
+                          const active = route.agent_id === agent.id;
+                          return (
+                            <button
+                              key={agent.id}
+                              type="button"
+                              className={`agent-choice ${active ? 'active' : ''}`}
+                              onClick={() => selectOpenClawAgent(index, agent.id)}
+                            >
+                              <span>{agent.name || agent.id}</span>
+                              <small>{agent.id}</small>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+                        未读取到 Agent，可刷新列表或手动输入 Agent ID。
+                      </div>
+                    )}
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 8 }}>
+                    <label>Agent ID</label>
                     <input value={route.agent_id}
-                      list="openclaw-agent-options"
-                      onChange={(e) => selectOpenClawAgent(index, e.target.value)}
+                      onChange={(e) => updateOpenClawRoute(index, { agent_id: e.target.value, agent_name: '' })}
                       placeholder="例如 qinwu-yuan" />
                     {route.agent_name && (
                       <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>
                         {route.agent_name}
                       </div>
                     )}
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>额外提示词</label>
+                    <textarea value={route.extra_prompt}
+                      onChange={(e) => updateOpenClawRoute(index, { extra_prompt: e.target.value })}
+                      placeholder="此路由专属提示词，例如：回复需简洁、遇到价格争议提醒人工确认。" />
                   </div>
                 </div>
               ))}

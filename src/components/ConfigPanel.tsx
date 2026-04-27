@@ -5,6 +5,7 @@ interface OpenClawRoute {
   keywords: string;
   agent_id: string;
   agent_name: string;
+  extra_prompt: string;
 }
 
 interface Config {
@@ -15,6 +16,7 @@ interface Config {
   feishu_webhook_url: string;
   wechat_enabled: boolean;
   wecom_enabled: boolean;
+  workflow_mode: 'customer' | 'assistant';
   mode: 'assist' | 'auto';
   escalation_keywords: string;
   max_unsolved_rounds: number;
@@ -39,6 +41,7 @@ const DEFAULT_CONFIG: Config = {
   feishu_webhook_url: '',
   wechat_enabled: true,
   wecom_enabled: true,
+  workflow_mode: 'customer',
   mode: 'auto',
   escalation_keywords: '退款,投诉,经理,报警',
   max_unsolved_rounds: 2,
@@ -85,6 +88,7 @@ export default function ConfigPanel() {
             feishu_webhook_url: loaded.feishu?.webhook_url || '',
             wechat_enabled: loaded.wechat?.enabled ?? true,
             wecom_enabled: loaded.wecom?.enabled ?? true,
+            workflow_mode: loaded.workflow_mode || 'customer',
             mode: loaded.mode || 'auto',
             escalation_keywords: loaded.escalation?.keywords || '退款,投诉,经理,报警',
             max_unsolved_rounds: loaded.escalation?.max_unsolved_rounds || 2,
@@ -104,6 +108,7 @@ export default function ConfigPanel() {
                 keywords: Array.isArray(route.keywords) ? route.keywords.join(',') : (route.keywords || ''),
                 agent_id: route.agent_id || '',
                 agent_name: route.agent_name || '',
+                extra_prompt: route.extra_prompt || '',
               }))
               : [],
           });

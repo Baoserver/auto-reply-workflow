@@ -7,28 +7,34 @@ minimax:
 feishu:
   webhook_url: ''
 wechat:
-  enabled: true
+  enabled: false
   window_title: 微信
 wecom:
   enabled: true
   window_title: 企业微信
+workflow_mode: assistant
 mode: auto
 escalation:
-  keywords: 退款,投诉,经理,报警,差评
+  keywords: 转人工
   max_unsolved_rounds: 5
 reply_delay_min: 1
 reply_delay_max: 3
 ocr:
   enabled: true
   fast_mode: true
-  check_interval: 3
+  check_interval: 10
   languages:
     - zh-Hans
     - en
   trigger_keywords: 退货
 openclaw:
-  enabled: false
+  enabled: true
   cli_path: /opt/homebrew/bin/openclaw
   timeout_seconds: 120
   extra_prompt: ''
-  routes: []
+  routes:
+    - enabled: true
+      keywords: 任务收到
+      agent_id: qinwu-yuan
+      agent_name: 勤务猿
+      extra_prompt: 根据上述对话信息，在飞书任务中创建任务。并最后给我返回任务名称

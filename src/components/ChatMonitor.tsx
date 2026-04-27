@@ -96,6 +96,126 @@ export default function ChatMonitor({ events }: Props) {
             );
           }
 
+          if (ev.type === 'ocr') {
+            const lines: string[] = ev.data.new_lines || [];
+            const windowName = ev.data.window || '';
+            return (
+              <div key={i} className="log-item ocr">
+                <div className="log-ocr-badge">
+                  <div className="log-ocr-header">
+                    <span className="log-tag ocr">OCR</span>
+                    <span className="log-ocr-window">{windowName}</span>
+                    <span className="log-ocr-count">{lines.length} 行新内容</span>
+                  </div>
+                  {lines.length > 0 && (
+                    <div className="log-ocr-lines">
+                      {lines.map((line: string, li: number) => (
+                        <div key={li} className="log-ocr-line">{line}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          }
+
+          if (ev.type === 'vision') {
+            const r = ev.data.result || {};
+            const windowName = ev.data.window || '';
+            const msg = r.latest_message || {};
+            const recentMessages = Array.isArray(r.recent_messages) ? r.recent_messages : [];
+            const conversationText = r.conversation_text || '';
+            const visibleText = r.visible_text || '';
+            const isAssistantMode = r.workflow_mode === 'assistant';
+            return (
+              <div key={i} className="log-item vision">
+                <div className="log-ocr-badge">
+                  <div className="log-ocr-header">
+                    <span className="log-tag vision">Vision</span>
+                    <span className="log-ocr-window">{windowName}</span>
+                    <span className="log-ocr-count">
+                      {isAssistantMode ? '完整上下文' : (r.has_new_message ? '新消息' : '无新消息')}
+                    </span>
+                  </div>
+                  <div className="log-ocr-lines">
+                    {isAssistantMode && r.matched_keyword && (
+                      <div className="log-ocr-line">命中关键词: {r.matched_keyword}</div>
+                    )}
+                    {isAssistantMode && r.route_agent && (
+                      <div className="log-ocr-line">路由 Agent: {r.route_agent.name || r.route_agent.id}</div>
+                    )}
+                    {msg.sender && <div className="log-ocr-line">发送者: {msg.sender}</div>}
+                    {msg.content && <div className="log-ocr-line">内容: {msg.content}</div>}
+                    {recentMessages.length > 0 && (
+                      <>
+                        <div className="log-ocr-line log-vision-section">最近对话</div>
+                        {recentMessages.slice(-12).map((item: any, mi: number) => (
+                          <div key={mi} className="log-ocr-line">
+                            {(item.sender || (item.is_self ? '我方' : '客户'))}: {item.content || ''}
+                          </div>
+                        ))}
+                      </>
+                    )}
+                    {conversationText && (
+                      <>
+                        <div className="log-ocr-line log-vision-section">对话摘要</div>
+                        <div className="log-ocr-line">{conversationText}</div>
+                      </>
+                    )}
+                    {visibleText && (
+                      <>
+                        <div className="log-ocr-line log-vision-section">可见文字</div>
+                        <div className="log-ocr-line">{visibleText}</div>
+                      </>
+                    )}
+                    {r.input_box && <div className="log-ocr-line">输入框: [{r.input_box.join(', ')}]</div>}
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          if (ev.type === 'openclaw') {
+            const parsed = ev.data.parsed ? JSON.stringify(ev.data.parsed, null, 2) : '';
+            return (
+              <div key={i} className="log-item openclaw">
+                <div className="log-ocr-badge">
+                  <div className="log-ocr-header">
+                    <span className="log-tag openclaw">OpenClaw</span>
+                    <span className="log-ocr-window">{ev.data.agent_name || ev.data.agent_id}</span>
+                    <span className="log-ocr-count">{ev.data.matched_keyword || '返回'}</span>
+                  </div>
+                  <div className="log-ocr-lines">
+                    {ev.data.reply && (
+                      <>
+                        <div className="log-ocr-line log-vision-section">最终回复</div>
+                        <div className="log-ocr-line">{ev.data.reply}</div>
+                      </>
+                    )}
+                    {parsed && (
+                      <>
+                        <div className="log-ocr-line log-vision-section">解析 JSON</div>
+                        <pre className="log-json-line">{parsed}</pre>
+                      </>
+                    )}
+                    {ev.data.stdout && (
+                      <>
+                        <div className="log-ocr-line log-vision-section">STDOUT</div>
+                        <pre className="log-json-line">{ev.data.stdout}</pre>
+                      </>
+                    )}
+                    {ev.data.stderr && (
+                      <>
+                        <div className="log-ocr-line log-vision-section">STDERR</div>
+                        <pre className="log-json-line">{ev.data.stderr}</pre>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
           return null;
         })}
       </div>

@@ -1,6 +1,7 @@
 """OpenClaw 回复工作流客户端。"""
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass
 from typing import Any
@@ -13,11 +14,16 @@ def emit_log(level: str, message: str):
     print(json.dumps({"type": "log", "data": {"level": level, "message": message}}, ensure_ascii=False), flush=True)
 
 
+def emit(event_type: str, data: dict):
+    print(json.dumps({"type": event_type, "data": data}, ensure_ascii=False), flush=True)
+
+
 @dataclass
 class OpenClawRoute:
     agent_id: str
     agent_name: str
     matched_keyword: str
+    extra_prompt: str = ""
 
 
 class OpenClawClient:
@@ -49,10 +55,11 @@ class OpenClawClient:
                         agent_id=agent_id,
                         agent_name=(route.get("agent_name") or agent_id).strip(),
                         matched_keyword=keyword,
+                        extra_prompt=(route.get("extra_prompt") or "").strip(),
                     )
         return None
 
-    def generate_reply(self, message: str, channel: str, sender: str) -> str | None:
+    def generate_reply(self, message: str, channel: str, sender: str, context: str = "") -> str | None:
         route = self.match_route(message)
         if not route:
             return None
@@ -62,7 +69,56 @@ class OpenClawClient:
             channel=channel,
             sender=sender,
             route=route,
+            context=context,
         )
+        emit_log("info", f"OpenClaw route matched: agent={route.agent_id}, keyword={route.matched_keyword}")
+        call_result = self._call_agent(route=route, prompt=prompt)
+        if not call_result:
+            return None
+        if not call_result.get("reply"):
+            emit_log("warn", "OpenClaw empty or unparseable reply")
+            return None
+        return call_result["reply"]
+
+    def run_agent(self, route: OpenClawRoute, message: str, channel: str, sender: str, context: str = "") -> str | None:
+        """直接调用已命中的 OpenClaw route，不再重复做关键词匹配。"""
+        if not self.enabled:
+            emit_log("warn", "OpenClaw disabled, assistant workflow skipped")
+            return None
+
+        prompt = self._build_prompt(
+            message=message,
+            channel=channel,
+            sender=sender,
+            route=route,
+            context=context,
+        )
+        emit_log("info", f"OpenClaw assistant route matched: agent={route.agent_id}, keyword={route.matched_keyword}")
+        call_result = self._call_agent(route=route, prompt=prompt)
+        if not call_result:
+            return None
+        if not call_result.get("reply"):
+            emit_log("warn", "OpenClaw empty or unparseable reply")
+            return None
+        return call_result["reply"]
+
+    def run_agent_detail(self, route: OpenClawRoute, message: str, channel: str, sender: str, context: str = "") -> dict | None:
+        """直接调用已命中的 OpenClaw route，并返回完整调用信息供前端日志展示。"""
+        if not self.enabled:
+            emit_log("warn", "OpenClaw disabled, assistant workflow skipped")
+            return None
+
+        prompt = self._build_prompt(
+            message=message,
+            channel=channel,
+            sender=sender,
+            route=route,
+            context=context,
+        )
+        emit_log("info", f"OpenClaw assistant route matched: agent={route.agent_id}, keyword={route.matched_keyword}")
+        return self._call_agent(route=route, prompt=prompt)
+
+    def _call_agent(self, route: OpenClawRoute, prompt: str) -> dict | None:
         cmd = [
             self.cli_path,
             "agent",
@@ -74,8 +130,6 @@ class OpenClawClient:
             "--timeout",
             str(self.timeout_seconds),
         ]
-
-        emit_log("info", f"OpenClaw route matched: agent={route.agent_id}, keyword={route.matched_keyword}")
 
         try:
             result = subprocess.run(
@@ -99,13 +153,22 @@ class OpenClawClient:
             emit_log("error", f"OpenClaw non-zero exit {result.returncode}: {err[:500]}")
             return None
 
-        reply = self._extract_reply(result.stdout)
-        if not reply:
-            emit_log("warn", "OpenClaw empty or unparseable reply")
-            return None
-        return reply
+        parsed = self._parse_json_output(result.stdout.strip())
+        reply = self._extract_reply(result.stdout, parsed)
+        call_result = {
+            "reply": reply,
+            "agent_id": route.agent_id,
+            "agent_name": route.agent_name,
+            "matched_keyword": route.matched_keyword,
+            "returncode": result.returncode,
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+            "parsed": parsed,
+        }
+        emit("openclaw", call_result)
+        return call_result
 
-    def _build_prompt(self, message: str, channel: str, sender: str, route: OpenClawRoute) -> str:
+    def _build_prompt(self, message: str, channel: str, sender: str, route: OpenClawRoute, context: str = "") -> str:
         parts = [
             "你正在作为客服回复工作流中的 OpenClaw Agent。",
             "请只输出一段可以直接发送给客户的简体中文回复，不要输出分析过程、Markdown 标题、JSON 或代码块。",
@@ -116,16 +179,18 @@ class OpenClawClient:
             f"命中关键词：{route.matched_keyword}",
             f"路由 Agent：{route.agent_name} ({route.agent_id})",
         ]
-        if self.extra_prompt.strip():
-            parts.extend(["", "额外设定：", self.extra_prompt.strip()])
+        if context.strip():
+            parts.extend(["", "识别出的对话信息：", context.strip()])
+        effective_prompt = route.extra_prompt or self.extra_prompt
+        if effective_prompt.strip():
+            parts.extend(["", "额外设定：", effective_prompt.strip()])
         return "\n".join(parts)
 
-    def _extract_reply(self, output: str) -> str | None:
+    def _extract_reply(self, output: str, parsed: Any | None = None) -> str | None:
         raw = output.strip()
         if not raw:
             return None
 
-        parsed = self._parse_json_output(raw)
         if parsed is not None:
             text = self._find_text(parsed)
             if text:
@@ -149,19 +214,40 @@ class OpenClawClient:
         return None
 
     def _find_text(self, value: Any) -> str | None:
+        candidates = self._collect_text_candidates(value)
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return candidates[0][1]
+
+    def _collect_text_candidates(self, value: Any, path: tuple[str, ...] = ()) -> list[tuple[int, str]]:
         if isinstance(value, str):
-            return value
+            text = value.strip()
+            if not self._is_reply_candidate(text, path):
+                return []
+            key = path[-1].lower() if path else ""
+            score = min(len(text), 1000)
+            if key in {"reply", "final_reply", "final_answer", "final_response", "answer"}:
+                score += 2000
+            elif key in {"content", "text", "message", "response", "output", "result", "summary"}:
+                score += 1000
+            if re.search(r"[\u4e00-\u9fff]", text):
+                score += 200
+            return [(score, text)]
         if isinstance(value, list):
+            candidates: list[tuple[int, str]] = []
             for item in value:
-                found = self._find_text(item)
-                if found:
-                    return found
-            return None
+                candidates.extend(self._collect_text_candidates(item, path))
+            return candidates
         if not isinstance(value, dict):
-            return None
+            return []
 
         preferred_keys = (
             "reply",
+            "final_reply",
+            "final_answer",
+            "final_response",
+            "answer",
             "content",
             "text",
             "message",
@@ -169,16 +255,33 @@ class OpenClawClient:
             "output",
             "summary",
         )
+        candidates: list[tuple[int, str]] = []
         for key in preferred_keys:
-            found = self._find_text(value.get(key))
-            if found:
-                return found
+            if key in value:
+                candidates.extend(self._collect_text_candidates(value.get(key), (*path, key)))
 
-        for item in value.values():
-            found = self._find_text(item)
-            if found:
-                return found
-        return None
+        ignored_keys = {
+            "status", "state", "id", "uid", "uuid", "type", "role", "name",
+            "agent", "agent_id", "agent_name", "model", "provider", "created_at",
+            "updated_at", "timestamp", "duration", "elapsed", "success",
+        }
+        for key, item in value.items():
+            if key in preferred_keys or key.lower() in ignored_keys:
+                continue
+            candidates.extend(self._collect_text_candidates(item, (*path, key)))
+        return candidates
+
+    def _is_reply_candidate(self, text: str, path: tuple[str, ...]) -> bool:
+        if not text:
+            return False
+        key = path[-1].lower() if path else ""
+        if key in {"status", "state", "id", "type", "role", "name", "agent", "agent_id", "model"}:
+            return False
+        if text.lower() in {"completed", "complete", "success", "ok", "done", "running", "failed", "error"}:
+            return False
+        if len(text) < 2:
+            return False
+        return True
 
     def _clean_reply(self, text: str) -> str | None:
         cleaned = text.strip()

@@ -50,7 +50,7 @@ class Agent:
     def start(self):
         self.running = True
         emit("status", {"state": "running"})
-        self.detector.start(self._on_new_message)
+        self.detector.start(self._on_new_message, self._on_assistant_workflow)
 
     def stop(self):
         print("[Agent] stop() called", flush=True)
@@ -83,7 +83,8 @@ class Agent:
             return
 
         try:
-            reply = self.ai.generate_reply(content, channel=channel, sender=sender)
+            context = self._format_conversation_context(vision_result)
+            reply = self.ai.generate_reply(content, channel=channel, sender=sender, context=context)
         except Exception as e:
             print(f"[Agent] AI error: {e}", flush=True)
             reply = None
@@ -113,6 +114,89 @@ class Agent:
         emit("escalation", {"reason": reason, "feishu_notified": notified})
         self.operator.type_and_send("好的，我帮您转接人工客服，请稍候~", window_name=channel)
         self.conversation_rounds.pop(sender, None)
+
+    def _on_assistant_workflow(self, channel: str, route, trigger_text: str, screenshot_path: str = "", vision_result: dict = None) -> bool:
+        if not self.running:
+            return False
+
+        context = self._format_conversation_context(vision_result)
+        emit("message", {
+            "channel": channel,
+            "sender": f"助手模式/{route.agent_name or route.agent_id}",
+            "content": trigger_text,
+        })
+
+        if vision_result and vision_result.get("input_box"):
+            try:
+                x_ratio, y_ratio = vision_result["input_box"]
+                screen_size = pyautogui.size()
+                x = int(x_ratio * screen_size[0])
+                y = int(y_ratio * screen_size[1])
+                self.operator.update_input_box_position(x, y)
+            except Exception:
+                pass
+
+        try:
+            openclaw_result = self.ai.openclaw.run_agent_detail(
+                route=route,
+                message=trigger_text,
+                channel=channel,
+                sender="助手模式",
+                context=context,
+            )
+            reply = openclaw_result.get("reply") if openclaw_result else None
+        except Exception as e:
+            print(f"[Agent] OpenClaw assistant error: {e}", flush=True)
+            reply = None
+
+        if not reply:
+            emit("log", {
+                "level": "warn",
+                "message": f"助手模式 OpenClaw 未返回可发送内容，agent={route.agent_id}",
+            })
+            return False
+
+        emit("reply", {"content": reply, "workflow_mode": "assistant"})
+
+        try:
+            self.operator.type_and_send(reply, window_name=channel)
+            emit("log", {
+                "level": "info",
+                "message": f"助手模式已自动发送 OpenClaw 回复，agent={route.agent_id}",
+            })
+            return True
+        except Exception as e:
+            print(f"[Agent] assistant send error: {e}", flush=True)
+            emit("log", {"level": "error", "message": f"助手模式发送失败: {e}"})
+            return False
+
+    def _format_conversation_context(self, vision_result: dict | None) -> str:
+        if not vision_result:
+            return ""
+
+        conversation_text = str(vision_result.get("conversation_text") or "").strip()
+        visible_text = str(vision_result.get("visible_text") or "").strip()
+        recent_messages = vision_result.get("recent_messages")
+        if isinstance(recent_messages, list) and recent_messages:
+            lines = []
+            for item in recent_messages[-20:]:
+                if not isinstance(item, dict):
+                    continue
+                speaker = str(item.get("sender") or ("我方" if item.get("is_self") else "客户")).strip()
+                message = str(item.get("content") or "").strip()
+                if message:
+                    lines.append(f"{speaker}: {message}")
+            if lines:
+                context = "\n".join(lines)
+                if conversation_text and conversation_text not in context:
+                    context = f"{conversation_text}\n\n结构化消息：\n{context}"
+                if visible_text and visible_text not in context:
+                    context = f"{context}\n\n可见文字：\n{visible_text}"
+                return context[-5000:]
+
+        if conversation_text and visible_text and visible_text not in conversation_text:
+            return f"{conversation_text}\n\n可见文字：\n{visible_text}"[-5000:]
+        return (conversation_text or visible_text)[-5000:]
 
 
 def main():

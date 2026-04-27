@@ -7,9 +7,11 @@ import re
 import json
 import os
 from dataclasses import dataclass
+from PIL import Image
 from screen_capture import ScreenCapture
 from vision import VisionAnalyzer
 from local_ocr import LocalOCR
+from openclaw_client import OpenClawClient
 
 
 # 系统/通知类消息，不应触发客服回复
@@ -29,6 +31,10 @@ def emit_log(level: str, message: str):
     print(json.dumps({"type": "log", "data": {"level": level, "message": message}}, ensure_ascii=False), flush=True)
 
 
+def emit(event_type: str, data: dict):
+    print(json.dumps({"type": event_type, "data": data}, ensure_ascii=False), flush=True)
+
+
 @dataclass
 class WindowState:
     hash: str = ""
@@ -43,6 +49,8 @@ class WeChatDetector:
         self.vision = vision
         self.config = config
         self.local_ocr = LocalOCR(config)
+        self.openclaw = OpenClawClient(config)
+        self.workflow_mode = config.get("workflow_mode", "customer")
 
         self._running = False
         self._thread = None
@@ -54,29 +62,39 @@ class WeChatDetector:
 
         ocr_cfg = config.get("ocr", {})
         self.trigger_keywords = [k.strip() for k in ocr_cfg.get("trigger_keywords", "").split(",") if k.strip()]
-        self.chat_region = None
+        # 自动合并 OpenClaw 路由关键词到触发词
+        for route in config.get("openclaw", {}).get("routes", []):
+            if route.get("enabled", True):
+                for kw in str(route.get("keywords", "")).replace("，", ",").split(","):
+                    kw = kw.strip()
+                    if kw and kw not in self.trigger_keywords:
+                        self.trigger_keywords.append(kw)
+        # 聊天区域裁剪 (left_ratio, top_ratio, right_ratio, bottom_ratio)，默认取右 65%
+        region_cfg = ocr_cfg.get("chat_region", [0.35, 0.0, 1.0, 1.0])
+        self.chat_region = tuple(region_cfg) if region_cfg else None
         self._first_check_logged = set()
 
-    def start(self, callback):
+    def start(self, callback, assistant_callback=None):
         self._running = True
-        self._thread = threading.Thread(target=self._monitor_loop, args=(callback,), daemon=True)
+        self._thread = threading.Thread(target=self._monitor_loop, args=(callback, assistant_callback), daemon=True)
         self._thread.start()
-        emit_log("info", f"检测器已启动，间隔 {self._check_interval}s，本地OCR={'开启' if self.local_ocr.enabled else '关闭'}，触发词: {self.trigger_keywords or '(无，全部放行)'}")
+        mode_label = "助手模式" if self.workflow_mode == "assistant" else "客服模式"
+        emit_log("info", f"检测器已启动，模式={mode_label}，间隔 {self._check_interval}s，本地OCR={'开启' if self.local_ocr.enabled else '关闭'}，触发词: {self.trigger_keywords or '(无，全部放行)'}")
 
     def stop(self):
         self._running = False
         if self._thread:
             self._thread.join(timeout=5)
 
-    def _monitor_loop(self, callback):
+    def _monitor_loop(self, callback, assistant_callback=None):
         while self._running:
             try:
-                self._check_windows(callback)
+                self._check_windows(callback, assistant_callback)
             except Exception as e:
                 emit_log("error", f"检测循环异常: {e}")
             time.sleep(self._check_interval)
 
-    def _check_windows(self, callback):
+    def _check_windows(self, callback, assistant_callback=None):
         windows = []
         if self.config.get("wecom", {}).get("enabled", True):
             windows.append("企业微信")
@@ -124,13 +142,17 @@ class WeChatDetector:
             ocr_text = ""
             new_lines = []
             ocr_success = False
+            vision_image_path = screenshot_path
 
             if self.local_ocr.enabled:
                 try:
-                    ocr_text = self.local_ocr.extract_text_string(screenshot_path)
+                    ocr_image = self._crop_chat_region(screenshot_path)
+                    vision_image_path = ocr_image
+                    ocr_text = self.local_ocr.extract_text_string(ocr_image)
                     if ocr_text:
                         new_lines = self._diff_new_lines(state.ocr_text, ocr_text)
                         emit_log("info", f"[{window_name}] OCR提取 {len(ocr_text)} 字符，新增 {len(new_lines)} 行")
+                        emit("ocr", {"window": window_name, "new_lines": new_lines, "full_text": ocr_text})
                         ocr_success = True
                     else:
                         emit_log("warn", f"[{window_name}] 本地OCR返回空结果，将直接使用视觉API")
@@ -139,6 +161,11 @@ class WeChatDetector:
 
             state.ocr_text = ocr_text
             state.screenshot_path = screenshot_path
+
+            if self.workflow_mode == "assistant" and not ocr_success:
+                emit_log("warn", f"[{window_name}] 助手模式需要 OCR 新增行做路由，当前无可用 OCR，跳过")
+                self._maybe_cleanup_screenshot(screenshot_path)
+                continue
 
             # OCR 有效时的过滤
             if ocr_success:
@@ -160,6 +187,17 @@ class WeChatDetector:
                     self._maybe_cleanup_screenshot(screenshot_path)
                     continue
 
+                if self.workflow_mode == "assistant":
+                    self._handle_assistant_workflow(
+                        window_name=window_name,
+                        screenshot_path=screenshot_path,
+                        vision_image_path=vision_image_path,
+                        meaningful_lines=meaningful_lines,
+                        dedup_key=msg_hash,
+                        assistant_callback=assistant_callback,
+                    )
+                    continue
+
                 # 触发词检查
                 if self.trigger_keywords and not self._match_trigger(meaningful_lines):
                     emit_log("info", f"[{window_name}] 未命中触发词，跳过视觉API: {meaningful_lines[:3]}")
@@ -173,18 +211,16 @@ class WeChatDetector:
                 continue
 
             # 阶段二：调用 mmx-cli 视觉API
-            emit_log("info", f"[{window_name}] 调用视觉API精准分析")
+            emit_log("info", f"[{window_name}] 调用视觉API精准分析: {os.path.basename(vision_image_path)}")
             try:
-                result = self.vision.analyze_chat_screenshot(image_path=screenshot_path)
+                result = self.vision.analyze_chat_screenshot(image_path=vision_image_path, mode="customer")
+                emit("vision", {"window": window_name, "result": result})
+                emit_log("info", f"[{window_name}] Vision识别结果: {json.dumps(self._summarize_vision_result(result), ensure_ascii=False)}")
 
                 if result.get("has_new_message"):
                     msg = result.get("latest_message", {})
                     sender = msg.get("sender", "未知")
                     content = msg.get("content", "")
-
-                    if sender in SELF_SENDERS or any(s in sender for s in ("文件传输", "助手")):
-                        self._maybe_cleanup_screenshot(screenshot_path)
-                        continue
 
                     if content:
                         self._processed_hashes.append(dedup_key)
@@ -200,6 +236,55 @@ class WeChatDetector:
             except Exception as e:
                 emit_log("error", f"视觉API异常: {e}")
                 self._maybe_cleanup_screenshot(screenshot_path)
+
+    def _handle_assistant_workflow(
+        self,
+        window_name: str,
+        screenshot_path: str,
+        vision_image_path: str,
+        meaningful_lines: list[str],
+        dedup_key: str,
+        assistant_callback,
+    ):
+        route_text = "\n".join(meaningful_lines)
+        route = self.openclaw.match_route(route_text)
+        if not route:
+            emit_log("info", f"[{window_name}] 助手模式未命中 OpenClaw 路由，跳过: {meaningful_lines[:3]}")
+            self._maybe_cleanup_screenshot(screenshot_path)
+            return
+
+        if not assistant_callback:
+            emit_log("warn", f"[{window_name}] 助手模式缺少回调，跳过 OpenClaw 处理")
+            self._maybe_cleanup_screenshot(screenshot_path)
+            return
+
+        emit_log("info", f"[{window_name}] 助手模式命中路由: agent={route.agent_id}, keyword={route.matched_keyword}")
+        emit_log("info", f"[{window_name}] 助手模式调用视觉API完整识别: {os.path.basename(vision_image_path)}")
+
+        try:
+            result = self.vision.analyze_chat_screenshot(image_path=vision_image_path, mode="assistant")
+            if not self._assistant_vision_has_content(result):
+                emit_log("error", f"[{window_name}] 助手模式 Vision 未返回有效上下文，跳过 OpenClaw")
+                self._maybe_cleanup_screenshot(screenshot_path)
+                return
+
+            result["workflow_mode"] = "assistant"
+            result["matched_keyword"] = route.matched_keyword
+            result["route_agent"] = {"id": route.agent_id, "name": route.agent_name}
+            emit("vision", {"window": window_name, "result": result})
+            emit_log("info", f"[{window_name}] Vision识别结果: {json.dumps(self._summarize_vision_result(result), ensure_ascii=False)}")
+
+            handled = assistant_callback(window_name, route, route_text, screenshot_path, result)
+            if handled:
+                self._processed_hashes.append(dedup_key)
+                if len(self._processed_hashes) > self._max_dedup:
+                    self._processed_hashes = self._processed_hashes[-self._max_dedup:]
+                self._maybe_cleanup_screenshot(screenshot_path, keep=True)
+            else:
+                self._maybe_cleanup_screenshot(screenshot_path)
+        except Exception as e:
+            emit_log("error", f"助手模式视觉/OpenClaw流程异常: {e}")
+            self._maybe_cleanup_screenshot(screenshot_path)
 
     def _diff_new_lines(self, old_text: str, new_text: str) -> list[str]:
         if not old_text:
@@ -228,13 +313,56 @@ class WeChatDetector:
                 return True
         return False
 
+    def _summarize_vision_result(self, result: dict) -> dict:
+        if not isinstance(result, dict):
+            return {}
+        recent_messages = result.get("recent_messages")
+        if not isinstance(recent_messages, list):
+            recent_messages = []
+        return {
+            "has_new_message": result.get("has_new_message", False),
+            "latest_message": result.get("latest_message", {}),
+            "recent_messages": recent_messages[-12:],
+            "conversation_text": result.get("conversation_text", ""),
+            "visible_text": result.get("visible_text", ""),
+            "workflow_mode": result.get("workflow_mode", self.workflow_mode),
+            "matched_keyword": result.get("matched_keyword", ""),
+            "route_agent": result.get("route_agent", {}),
+        }
+
+    def _assistant_vision_has_content(self, result: dict) -> bool:
+        if not isinstance(result, dict):
+            return False
+        if str(result.get("conversation_text") or "").strip():
+            return True
+        if str(result.get("visible_text") or "").strip():
+            return True
+        recent_messages = result.get("recent_messages")
+        return isinstance(recent_messages, list) and len(recent_messages) > 0
+
     def _maybe_cleanup_screenshot(self, path: str, keep: bool = False):
         if keep:
             return
+        self._cleanup_old_files()
         try:
             p = os.path.normpath(path)
-            if os.path.exists(p) and "screenshots" in p:
-                os.unlink(p)
+            chat_p = p.replace(".png", "_chat.png")
+            if os.path.exists(chat_p) and "screenshots" in chat_p:
+                os.unlink(chat_p)
+        except Exception:
+            pass
+
+    def _cleanup_old_files(self):
+        """删除超过1小时的截图文件"""
+        now = time.time()
+        screenshots_dir = "/tmp/screenshots"
+        if not os.path.isdir(screenshots_dir):
+            return
+        try:
+            for f in os.listdir(screenshots_dir):
+                fp = os.path.join(screenshots_dir, f)
+                if os.path.isfile(fp) and (now - os.path.getmtime(fp)) > 3600:
+                    os.unlink(fp)
         except Exception:
             pass
 
@@ -244,3 +372,15 @@ class WeChatDetector:
         with open(path, "rb") as f:
             h.update(f.read())
         return h.hexdigest()
+
+    def _crop_chat_region(self, image_path: str) -> str:
+        if not self.chat_region:
+            return image_path
+        img = Image.open(image_path)
+        w, h = img.size
+        left, top, right, bottom = self.chat_region
+        box = (int(left * w), int(top * h), int(right * w), int(bottom * h))
+        cropped = img.crop(box)
+        cropped_path = image_path.replace(".png", "_chat.png")
+        cropped.save(cropped_path, "PNG")
+        return cropped_path
