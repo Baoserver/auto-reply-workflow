@@ -6,9 +6,32 @@ from pathlib import Path
 from Quartz import CGWindowListCopyWindowInfo, CGWindowListCreateImage, kCGNullWindowID, kCGWindowListOptionAll, kCGWindowListExcludeDesktopElements
 
 SCREENSHOTS_DIR = os.path.expanduser("/tmp/screenshots")
+MAX_SCREENSHOT_FILES = 30
 
 def _ensure_screenshots_dir():
     Path(SCREENSHOTS_DIR).mkdir(parents=True, exist_ok=True)
+
+def cleanup_screenshots_dir(max_files: int = MAX_SCREENSHOT_FILES):
+    """只保留截图目录中最新的 max_files 个图片文件。"""
+    _ensure_screenshots_dir()
+    try:
+        files = []
+        for name in os.listdir(SCREENSHOTS_DIR):
+            path = os.path.join(SCREENSHOTS_DIR, name)
+            if not os.path.isfile(path):
+                continue
+            if not name.lower().endswith((".png", ".jpg", ".jpeg")):
+                continue
+            files.append((os.path.getmtime(path), path))
+
+        files.sort(reverse=True)
+        for _, path in files[max_files:]:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+    except Exception as e:
+        print(f"cleanup screenshots error: {e}")
 
 class ScreenCapture:
     def _get_window_id(self, window_name: str) -> str:
@@ -41,6 +64,7 @@ class ScreenCapture:
     def capture_window(self, window_name: str = "微信") -> str:
         """截取指定窗口，返回图片文件路径"""
         _ensure_screenshots_dir()
+        cleanup_screenshots_dir()
         filename = os.path.join(SCREENSHOTS_DIR, f"window_{int(__import__('time').time() * 1000)}.png")
 
         window_id_str = self._get_window_id(window_name)
@@ -54,21 +78,26 @@ class ScreenCapture:
                 ["screencapture", filename],
                 capture_output=True, timeout=5
             )
+        cleanup_screenshots_dir()
         return filename
 
     def capture_region(self, x: int, y: int, w: int, h: int) -> str:
         """截取指定区域"""
         _ensure_screenshots_dir()
+        cleanup_screenshots_dir()
         filename = os.path.join(SCREENSHOTS_DIR, f"region_{int(__import__('time').time() * 1000)}.png")
         region = f"{x},{y},{w},{h}"
         subprocess.run(["screencapture", "-R", region, filename], capture_output=True, timeout=5)
+        cleanup_screenshots_dir()
         return filename
 
     def capture_full_screen(self) -> str:
         """全屏截图"""
         _ensure_screenshots_dir()
+        cleanup_screenshots_dir()
         filename = os.path.join(SCREENSHOTS_DIR, f"fullscreen_{int(__import__('time').time() * 1000)}.png")
         subprocess.run(["screencapture", filename], capture_output=True, timeout=5)
+        cleanup_screenshots_dir()
         return filename
 
     def load_image_as_base64(self, path: str) -> str:

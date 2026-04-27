@@ -9,6 +9,7 @@ import os
 from dataclasses import dataclass
 from PIL import Image
 from screen_capture import ScreenCapture
+from screen_capture import cleanup_screenshots_dir
 from vision import VisionAnalyzer
 from local_ocr import LocalOCR
 from openclaw_client import OpenClawClient
@@ -342,8 +343,8 @@ class WeChatDetector:
 
     def _maybe_cleanup_screenshot(self, path: str, keep: bool = False):
         if keep:
+            cleanup_screenshots_dir()
             return
-        self._cleanup_old_files()
         try:
             p = os.path.normpath(path)
             chat_p = p.replace(".png", "_chat.png")
@@ -351,20 +352,11 @@ class WeChatDetector:
                 os.unlink(chat_p)
         except Exception:
             pass
+        cleanup_screenshots_dir()
 
     def _cleanup_old_files(self):
-        """删除超过1小时的截图文件"""
-        now = time.time()
-        screenshots_dir = "/tmp/screenshots"
-        if not os.path.isdir(screenshots_dir):
-            return
-        try:
-            for f in os.listdir(screenshots_dir):
-                fp = os.path.join(screenshots_dir, f)
-                if os.path.isfile(fp) and (now - os.path.getmtime(fp)) > 3600:
-                    os.unlink(fp)
-        except Exception:
-            pass
+        """兼容旧调用：只保留最新 30 个截图文件。"""
+        cleanup_screenshots_dir()
 
     @staticmethod
     def _file_hash(path: str) -> str:
@@ -383,4 +375,5 @@ class WeChatDetector:
         cropped = img.crop(box)
         cropped_path = image_path.replace(".png", "_chat.png")
         cropped.save(cropped_path, "PNG")
+        cleanup_screenshots_dir()
         return cropped_path
