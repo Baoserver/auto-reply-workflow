@@ -42,7 +42,7 @@ class Agent:
         self.vision = VisionAnalyzer(self.config)
         self.ai = AIEngine(self.config)
         self.operator = WeChatOperator()
-        self.detector = WeChatDetector(self.capture, self.vision)
+        self.detector = WeChatDetector(self.capture, self.vision, self.config)
         self.escalation = EscalationChecker(self.config)
         self.feishu = FeishuBot(self.config)
         self.conversation_rounds = {}
@@ -53,25 +53,13 @@ class Agent:
         self.detector.start(self._on_new_message)
 
     def stop(self):
-        import traceback
-        traceback.print_stack()
         print("[Agent] stop() called", flush=True)
-        self.running = False
-        self.detector.stop()
-        emit("status", {"state": "stopped"})
-
-    def stop(self):
         self.running = False
         self.detector.stop()
         emit("status", {"state": "stopped"})
 
     def _on_new_message(self, channel: str, sender: str, content: str, screenshot_path: str = "", vision_result: dict = None):
         if not self.running:
-            return
-
-        # 忽略自己发的消息和系统联系人，避免循环
-        self_senders = {"我", "me", "AI", "自己", "self", "本人", "文件传输助手", "文件传输", "传输助手", "WeChat", "微信团队", "系统消息"}
-        if sender in self_senders or any(s in sender for s in ("文件传输", "助手")):
             return
 
         emit("message", {"channel": channel, "sender": sender, "content": content})

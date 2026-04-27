@@ -1,54 +1,85 @@
 "use strict";
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
-var __generator = (this && this.__generator) || function (thisArg, body) {
-    var _ = { label: 0, sent: function() { if (t[0] & 1) throw t[1]; return t[1]; }, trys: [], ops: [] }, f, y, t, g = Object.create((typeof Iterator === "function" ? Iterator : Object).prototype);
-    return g.next = verb(0), g["throw"] = verb(1), g["return"] = verb(2), typeof Symbol === "function" && (g[Symbol.iterator] = function() { return this; }), g;
-    function verb(n) { return function (v) { return step([n, v]); }; }
-    function step(op) {
-        if (f) throw new TypeError("Generator is already executing.");
-        while (g && (g = 0, op[0] && (_ = 0)), _) try {
-            if (f = 1, y && (t = op[0] & 2 ? y["return"] : op[0] ? y["throw"] || ((t = y["return"]) && t.call(y), 0) : y.next) && !(t = t.call(y, op[1])).done) return t;
-            if (y = 0, t) op = [op[0] & 2, t.value];
-            switch (op[0]) {
-                case 0: case 1: t = op; break;
-                case 4: _.label++; return { value: op[1], done: false };
-                case 5: _.label++; y = op[1]; op = [0]; continue;
-                case 7: op = _.ops.pop(); _.trys.pop(); continue;
-                default:
-                    if (!(t = _.trys, t = t.length > 0 && t[t.length - 1]) && (op[0] === 6 || op[0] === 2)) { _ = 0; continue; }
-                    if (op[0] === 3 && (!t || (op[1] > t[0] && op[1] < t[3]))) { _.label = op[1]; break; }
-                    if (op[0] === 6 && _.label < t[1]) { _.label = t[1]; t = op; break; }
-                    if (t && _.label < t[2]) { _.label = t[2]; _.ops.push(op); break; }
-                    if (t[2]) _.ops.pop();
-                    _.trys.pop(); continue;
-            }
-            op = body.call(thisArg, _);
-        } catch (e) { op = [6, e]; y = 0; } finally { f = t = 0; }
-        if (op[0] & 5) throw op[1]; return { value: op[0] ? op[1] : void 0, done: true };
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
     }
-};
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
-var electron_1 = require("electron");
-var path = require("path");
-var fs = require("fs");
-var child_process_1 = require("child_process");
-var child_process_2 = require("child_process");
-var mainWindow = null;
-var tray = null;
-var agentProcess = null;
-var CONFIG_PATH = path.join(__dirname, '../../config.yaml');
-var KNOWLEDGE_DIR = path.join(__dirname, '../../agent/knowledge');
+const electron_1 = require("electron");
+const path = __importStar(require("path"));
+const fs = __importStar(require("fs"));
+const child_process_1 = require("child_process");
+const child_process_2 = require("child_process");
+let mainWindow = null;
+let tray = null;
+let agentProcess = null;
+let LOG_FILE;
+function log(msg) {
+    if (!LOG_FILE) {
+        try {
+            LOG_FILE = path.join(electron_1.app.getPath('userData'), 'app.log');
+        }
+        catch (e) {
+            console.error('Failed to get userData path:', e);
+            return;
+        }
+    }
+    const timestamp = new Date().toISOString();
+    const logLine = `[${timestamp}] ${msg}\n`;
+    try {
+        fs.appendFileSync(LOG_FILE, logLine);
+    }
+    catch (e) {
+        console.error('Failed to write log:', e);
+    }
+    console.log(logLine.trim());
+}
+// Determine paths based on whether app is packaged
+function getConfigPath() {
+    if (electron_1.app.isPackaged) {
+        return path.join(process.resourcesPath, 'app.asar.unpacked', 'config.yaml');
+    }
+    return path.join(__dirname, '../../config.yaml');
+}
+function getKnowledgeDir() {
+    if (electron_1.app.isPackaged) {
+        return path.join(process.resourcesPath, 'app.asar.unpacked', 'agent', 'knowledge');
+    }
+    return path.join(__dirname, '../../agent/knowledge');
+}
+const CONFIG_PATH = getConfigPath();
+const KNOWLEDGE_DIR = getKnowledgeDir();
 function createTrayIcon() {
-    var size = 16;
-    var img = electron_1.nativeImage.createEmpty();
+    const size = 16;
+    const img = electron_1.nativeImage.createEmpty();
     return img;
 }
 function createWindow() {
@@ -67,66 +98,100 @@ function createWindow() {
         },
     });
     mainWindow.loadFile(path.join(__dirname, '../index.html'));
-    mainWindow.once('ready-to-show', function () { return mainWindow === null || mainWindow === void 0 ? void 0 : mainWindow.show(); });
-    mainWindow.on('closed', function () {
+    mainWindow.once('ready-to-show', () => mainWindow?.show());
+    mainWindow.on('closed', () => {
         stopAgent();
         mainWindow = null;
     });
 }
 function createTray() {
-    var icon = createTrayIcon();
+    const icon = createTrayIcon();
     tray = new electron_1.Tray(icon);
-    var contextMenu = electron_1.Menu.buildFromTemplate([
-        { label: '显示窗口', click: function () { if (!mainWindow)
-                createWindow(); mainWindow === null || mainWindow === void 0 ? void 0 : mainWindow.show(); } },
+    const contextMenu = electron_1.Menu.buildFromTemplate([
+        { label: '显示窗口', click: () => { if (!mainWindow)
+                createWindow(); mainWindow?.show(); } },
         { type: 'separator' },
-        { label: '开始监控', click: function () { return startAgent(); } },
-        { label: '停止监控', click: function () { return stopAgent(); } },
+        { label: '开始监控', click: () => startAgent() },
+        { label: '停止监控', click: () => stopAgent() },
         { type: 'separator' },
-        { label: '退出', click: function () { electron_1.app.quit(); } },
+        { label: '退出', click: () => { electron_1.app.quit(); } },
     ]);
     tray.setContextMenu(contextMenu);
     tray.setToolTip('视觉智能客服');
-    tray.on('click', function () {
+    tray.on('click', () => {
         if (!mainWindow)
             createWindow();
-        mainWindow === null || mainWindow === void 0 ? void 0 : mainWindow.show();
+        mainWindow?.show();
     });
 }
 // --- Python Agent 管理 ---
 function startAgent() {
-    var _a, _b;
     if (agentProcess)
         return;
-    var agentPath = path.join(__dirname, '../../agent/agent.py');
-    agentProcess = (0, child_process_1.spawn)('python3', [agentPath], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    (_a = agentProcess.stdout) === null || _a === void 0 ? void 0 : _a.on('data', function (data) {
-        var lines = data.toString().split('\n').filter(Boolean);
-        for (var _i = 0, lines_1 = lines; _i < lines_1.length; _i++) {
-            var line = lines_1[_i];
+    console.log('[startAgent] called, isPackaged:', electron_1.app.isPackaged);
+    console.log('[startAgent] resourcesPath:', process.resourcesPath);
+    // Determine the correct path based on whether app is packaged
+    let agentPath;
+    if (electron_1.app.isPackaged) {
+        // In packaged app, use process.resourcesPath
+        agentPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'agent', 'agent.py');
+    }
+    else {
+        // In development, use the source agent directory
+        agentPath = path.join(__dirname, '../../agent/agent.py');
+    }
+    log(`agentPath: ${agentPath}`);
+    log(`isPackaged: ${electron_1.app.isPackaged}`);
+    log(`resourcesPath: ${process.resourcesPath}`);
+    try {
+        agentProcess = (0, child_process_1.spawn)('python3', [agentPath], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        log(`spawn succeeded, pid: ${agentProcess.pid}`);
+    }
+    catch (err) {
+        log(`spawn error: ${err}`);
+        mainWindow?.webContents.send('agent-event', {
+            type: 'log',
+            data: { level: 'error', message: `启动失败: ${err}` },
+        });
+        return;
+    }
+    agentProcess.stdout?.on('data', (data) => {
+        const lines = data.toString().split('\n').filter(Boolean);
+        for (const line of lines) {
             try {
-                var event_1 = JSON.parse(line);
-                console.log('[AGENT EVENT]', JSON.stringify(event_1));
-                mainWindow === null || mainWindow === void 0 ? void 0 : mainWindow.webContents.send('agent-event', event_1);
+                const event = JSON.parse(line);
+                log(`AGENT EVENT: ${JSON.stringify(event)}`);
+                mainWindow?.webContents.send('agent-event', event);
             }
             catch (e) {
-                console.log('[PARSE ERROR]', line, e);
+                log(`PARSE ERROR: ${line} ${e}`);
             }
         }
     });
-    (_b = agentProcess.stderr) === null || _b === void 0 ? void 0 : _b.on('data', function (data) {
-        mainWindow === null || mainWindow === void 0 ? void 0 : mainWindow.webContents.send('agent-event', {
+    agentProcess.stderr?.on('data', (data) => {
+        log(`AGENT STDERR: ${data.toString()}`);
+        mainWindow?.webContents.send('agent-event', {
             type: 'log',
             data: { level: 'error', message: data.toString() },
         });
     });
-    agentProcess.on('close', function () { agentProcess = null; });
+    agentProcess.on('error', (err) => {
+        log(`AGENT PROCESS ERROR: ${err}`);
+        mainWindow?.webContents.send('agent-event', {
+            type: 'log',
+            data: { level: 'error', message: `进程错误: ${err}` },
+        });
+    });
+    agentProcess.on('close', (code) => {
+        log(`AGENT CLOSE: ${code}`);
+        agentProcess = null;
+    });
     // Send initial status after a short delay to ensure window is ready
-    setTimeout(function () {
-        console.log('[START AGENT] mainWindow exists:', !!mainWindow);
-        mainWindow === null || mainWindow === void 0 ? void 0 : mainWindow.webContents.send('agent-event', { type: 'status', data: { state: 'running' } });
+    setTimeout(() => {
+        log(`mainWindow exists: ${!!mainWindow}`);
+        mainWindow?.webContents.send('agent-event', { type: 'status', data: { state: 'running' } });
     }, 1000);
 }
 function stopAgent() {
@@ -134,157 +199,145 @@ function stopAgent() {
         return;
     agentProcess.kill();
     agentProcess = null;
-    mainWindow === null || mainWindow === void 0 ? void 0 : mainWindow.webContents.send('agent-event', { type: 'status', data: { state: 'stopped' } });
+    mainWindow?.webContents.send('agent-event', { type: 'status', data: { state: 'stopped' } });
 }
 // --- IPC 处理 ---
-electron_1.ipcMain.on('agent-start', function () { return startAgent(); });
-electron_1.ipcMain.on('agent-stop', function () { return stopAgent(); });
-electron_1.ipcMain.on('agent-command', function (_e, cmd) {
-    var _a;
-    (_a = agentProcess === null || agentProcess === void 0 ? void 0 : agentProcess.stdin) === null || _a === void 0 ? void 0 : _a.write(JSON.stringify({ action: cmd }) + '\n');
+electron_1.ipcMain.on('agent-start', () => {
+    console.log('[IPC] agent-start received');
+    startAgent();
+});
+electron_1.ipcMain.on('agent-stop', () => stopAgent());
+electron_1.ipcMain.on('agent-command', (_e, cmd) => {
+    agentProcess?.stdin?.write(JSON.stringify({ action: cmd }) + '\n');
 });
 // 读取配置
-electron_1.ipcMain.handle('load-config', function () { return __awaiter(void 0, void 0, void 0, function () {
-    var yaml, content;
-    return __generator(this, function (_a) {
-        try {
-            if (fs.existsSync(CONFIG_PATH)) {
-                yaml = require('js-yaml');
-                content = fs.readFileSync(CONFIG_PATH, 'utf-8');
-                return [2 /*return*/, yaml.load(content) || {}];
-            }
+electron_1.ipcMain.handle('load-config', async () => {
+    try {
+        if (fs.existsSync(CONFIG_PATH)) {
+            const yaml = require('js-yaml');
+            const content = fs.readFileSync(CONFIG_PATH, 'utf-8');
+            return yaml.load(content) || {};
         }
-        catch (e) {
-            console.error('Failed to load config:', e);
-        }
-        return [2 /*return*/, {}];
-    });
-}); });
+    }
+    catch (e) {
+        console.error('Failed to load config:', e);
+    }
+    return {};
+});
 // 保存配置
-electron_1.ipcMain.handle('save-config', function (_e, config) { return __awaiter(void 0, void 0, void 0, function () {
-    var yaml, nestedConfig;
-    var _a, _b;
-    return __generator(this, function (_c) {
-        try {
-            yaml = require('js-yaml');
-            nestedConfig = {
-                minimax: {
-                    api_key: config.minimax_api_key || '',
-                    group_id: config.minimax_group_id || '',
-                    vision_model: config.minimax_vision_model || 'MiniMax-VL-01',
-                    text_model: config.minimax_text_model || 'MiniMax-Text-01',
-                },
-                feishu: {
-                    webhook_url: config.feishu_webhook_url || '',
-                },
-                wechat: {
-                    enabled: (_a = config.wechat_enabled) !== null && _a !== void 0 ? _a : true,
-                    window_title: '微信',
-                },
-                wecom: {
-                    enabled: (_b = config.wecom_enabled) !== null && _b !== void 0 ? _b : true,
-                    window_title: '企业微信',
-                },
-                mode: config.mode || 'auto',
-                escalation: {
-                    keywords: config.escalation_keywords || '退款,投诉,经理,报警',
-                    max_unsolved_rounds: config.max_unsolved_rounds || 2,
-                },
-                reply_delay_min: config.reply_delay_min || 1,
-                reply_delay_max: config.reply_delay_max || 3,
-            };
-            fs.writeFileSync(CONFIG_PATH, yaml.dump(nestedConfig), 'utf-8');
-            return [2 /*return*/, true];
-        }
-        catch (e) {
-            console.error('Failed to save config:', e);
-            return [2 /*return*/, false];
-        }
-        return [2 /*return*/];
-    });
-}); });
+electron_1.ipcMain.handle('save-config', async (_e, config) => {
+    try {
+        const yaml = require('js-yaml');
+        const nestedConfig = {
+            minimax: {
+                api_key: config.minimax_api_key || '',
+                group_id: config.minimax_group_id || '',
+                vision_model: config.minimax_vision_model || 'MiniMax-VL-01',
+                text_model: config.minimax_text_model || 'MiniMax-Text-01',
+            },
+            feishu: {
+                webhook_url: config.feishu_webhook_url || '',
+            },
+            wechat: {
+                enabled: config.wechat_enabled ?? true,
+                window_title: '微信',
+            },
+            wecom: {
+                enabled: config.wecom_enabled ?? true,
+                window_title: '企业微信',
+            },
+            mode: config.mode || 'auto',
+            escalation: {
+                keywords: config.escalation_keywords || '退款,投诉,经理,报警',
+                max_unsolved_rounds: config.max_unsolved_rounds || 2,
+            },
+            reply_delay_min: config.reply_delay_min || 1,
+            reply_delay_max: config.reply_delay_max || 3,
+            ocr: {
+                enabled: config.ocr_enabled ?? true,
+                fast_mode: config.ocr_fast_mode ?? true,
+                check_interval: config.ocr_check_interval || 3,
+                languages: ["zh-Hans", "en"],
+                trigger_keywords: config.ocr_trigger_keywords || "",
+            },
+        };
+        fs.writeFileSync(CONFIG_PATH, yaml.dump(nestedConfig), 'utf-8');
+        return true;
+    }
+    catch (e) {
+        console.error('Failed to save config:', e);
+        return false;
+    }
+});
 // 列出知识库文件
-electron_1.ipcMain.handle('list-knowledge-files', function () { return __awaiter(void 0, void 0, void 0, function () {
-    var files;
-    return __generator(this, function (_a) {
-        try {
-            if (!fs.existsSync(KNOWLEDGE_DIR)) {
-                fs.mkdirSync(KNOWLEDGE_DIR, { recursive: true });
-            }
-            files = fs.readdirSync(KNOWLEDGE_DIR);
-            return [2 /*return*/, files.map(function (f) {
-                    var stats = fs.statSync(path.join(KNOWLEDGE_DIR, f));
-                    return { name: f, size: "".concat((stats.size / 1024).toFixed(1), " KB"), updatedAt: '刚刚' };
-                })];
+electron_1.ipcMain.handle('list-knowledge-files', async () => {
+    try {
+        if (!fs.existsSync(KNOWLEDGE_DIR)) {
+            fs.mkdirSync(KNOWLEDGE_DIR, { recursive: true });
         }
-        catch (e) {
-            console.error('Failed to list knowledge files:', e);
-            return [2 /*return*/, []];
-        }
-        return [2 /*return*/];
-    });
-}); });
+        const files = fs.readdirSync(KNOWLEDGE_DIR);
+        return files.map((f) => {
+            const stats = fs.statSync(path.join(KNOWLEDGE_DIR, f));
+            return { name: f, size: `${(stats.size / 1024).toFixed(1)} KB`, updatedAt: '刚刚' };
+        });
+    }
+    catch (e) {
+        console.error('Failed to list knowledge files:', e);
+        return [];
+    }
+});
 // 写入知识库文件
-electron_1.ipcMain.handle('write-knowledge-file', function (_e, filename, content) { return __awaiter(void 0, void 0, void 0, function () {
-    return __generator(this, function (_a) {
-        try {
-            if (!fs.existsSync(KNOWLEDGE_DIR)) {
-                fs.mkdirSync(KNOWLEDGE_DIR, { recursive: true });
-            }
-            fs.writeFileSync(path.join(KNOWLEDGE_DIR, filename), content, 'utf-8');
-            return [2 /*return*/, true];
+electron_1.ipcMain.handle('write-knowledge-file', async (_e, filename, content) => {
+    try {
+        if (!fs.existsSync(KNOWLEDGE_DIR)) {
+            fs.mkdirSync(KNOWLEDGE_DIR, { recursive: true });
         }
-        catch (e) {
-            console.error('Failed to write knowledge file:', e);
-            return [2 /*return*/, false];
-        }
-        return [2 /*return*/];
-    });
-}); });
+        fs.writeFileSync(path.join(KNOWLEDGE_DIR, filename), content, 'utf-8');
+        return true;
+    }
+    catch (e) {
+        console.error('Failed to write knowledge file:', e);
+        return false;
+    }
+});
 // 删除知识库文件
-electron_1.ipcMain.handle('delete-knowledge-file', function (_e, filename) { return __awaiter(void 0, void 0, void 0, function () {
-    var filePath;
-    return __generator(this, function (_a) {
-        try {
-            filePath = path.join(KNOWLEDGE_DIR, filename);
-            if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
-                return [2 /*return*/, true];
-            }
-            return [2 /*return*/, false];
+electron_1.ipcMain.handle('delete-knowledge-file', async (_e, filename) => {
+    try {
+        const filePath = path.join(KNOWLEDGE_DIR, filename);
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            return true;
         }
-        catch (e) {
-            console.error('Failed to delete knowledge file:', e);
-            return [2 /*return*/, false];
-        }
-        return [2 /*return*/];
-    });
-}); });
+        return false;
+    }
+    catch (e) {
+        console.error('Failed to delete knowledge file:', e);
+        return false;
+    }
+});
 // 检查进程是否存在
-electron_1.ipcMain.handle('check-process', function (_e, name) { return __awaiter(void 0, void 0, void 0, function () {
-    var result;
-    return __generator(this, function (_a) {
-        try {
-            result = (0, child_process_2.execSync)("pgrep -xi \"".concat(name, "\""), { encoding: 'utf-8' });
-            return [2 /*return*/, result.trim().length > 0];
-        }
-        catch (_b) {
-            return [2 /*return*/, false];
-        }
-        return [2 /*return*/];
-    });
-}); });
+electron_1.ipcMain.handle('check-process', async (_e, name) => {
+    try {
+        const result = (0, child_process_2.execSync)(`pgrep -xi "${name}"`, { encoding: 'utf-8' });
+        return result.trim().length > 0;
+    }
+    catch {
+        return false;
+    }
+});
 // --- App 生命周期 ---
-electron_1.app.whenReady().then(function () {
+electron_1.app.whenReady().then(() => {
     createWindow();
     createTray();
+    // Auto-start agent for testing
+    setTimeout(() => startAgent(), 2000);
 });
-electron_1.app.on('window-all-closed', function () {
+electron_1.app.on('window-all-closed', () => {
     if (process.platform !== 'darwin')
         electron_1.app.quit();
 });
-electron_1.app.on('activate', function () {
+electron_1.app.on('activate', () => {
     if (!mainWindow)
         createWindow();
 });
-electron_1.app.on('before-quit', function () { stopAgent(); });
+electron_1.app.on('before-quit', () => { stopAgent(); });

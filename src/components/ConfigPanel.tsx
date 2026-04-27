@@ -13,6 +13,10 @@ interface Config {
   max_unsolved_rounds: number;
   reply_delay_min: number;
   reply_delay_max: number;
+  ocr_enabled: boolean;
+  ocr_fast_mode: boolean;
+  ocr_check_interval: number;
+  ocr_trigger_keywords: string;
 }
 
 const DEFAULT_CONFIG: Config = {
@@ -28,6 +32,10 @@ const DEFAULT_CONFIG: Config = {
   max_unsolved_rounds: 2,
   reply_delay_min: 1,
   reply_delay_max: 3,
+  ocr_enabled: true,
+  ocr_fast_mode: true,
+  ocr_check_interval: 3,
+  ocr_trigger_keywords: '怎么,如何,能不能,请问,价格,发货,退款,投诉,订单,物流,客服,帮助,问题',
 };
 
 export default function ConfigPanel() {
@@ -38,7 +46,6 @@ export default function ConfigPanel() {
   useEffect(() => {
     const loadConfig = async () => {
       if (!window.electronAPI) {
-        // Fallback to localStorage for development
         const stored = localStorage.getItem('vision-cs-config');
         if (stored) {
           try {
@@ -66,6 +73,10 @@ export default function ConfigPanel() {
             max_unsolved_rounds: loaded.escalation?.max_unsolved_rounds || 2,
             reply_delay_min: loaded.reply_delay_min || 1,
             reply_delay_max: loaded.reply_delay_max || 3,
+            ocr_enabled: loaded.ocr?.enabled ?? true,
+            ocr_fast_mode: loaded.ocr?.fast_mode ?? true,
+            ocr_check_interval: loaded.ocr?.check_interval || 3,
+            ocr_trigger_keywords: loaded.ocr?.trigger_keywords || DEFAULT_CONFIG.ocr_trigger_keywords,
           });
         }
       } catch (e) {
@@ -87,7 +98,6 @@ export default function ConfigPanel() {
       }
     }
 
-    // Fallback to localStorage
     localStorage.setItem('vision-cs-config', JSON.stringify(config));
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -139,6 +149,46 @@ export default function ConfigPanel() {
             <option value="MiniMax-Text-01">MiniMax-Text-01</option>
             <option value="MiniMax-M2.5">MiniMax-M2.5</option>
           </select>
+        </div>
+      </div>
+
+      {/* OCR Config */}
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">本地 OCR 识别</span>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>macOS Vision</span>
+        </div>
+        <div className="form-group">
+          <label>启用本地 OCR</label>
+          <div className="checkbox-group">
+            <label className="checkbox-label">
+              <input type="checkbox" checked={config.ocr_enabled}
+                onChange={(e) => update('ocr_enabled', e.target.checked)} />
+              {config.ocr_enabled ? '已开启' : '已关闭'}
+            </label>
+          </div>
+        </div>
+        <div className="form-group">
+          <label>识别精度</label>
+          <select value={config.ocr_fast_mode ? 'fast' : 'accurate'}
+            onChange={(e) => update('ocr_fast_mode', e.target.value === 'fast')}>
+            <option value="fast">快速模式 — 延迟低 (~20ms)</option>
+            <option value="accurate">精准模式 — 更准确 (~100ms)</option>
+          </select>
+        </div>
+        <div className="form-group">
+          <label>检测间隔（秒）</label>
+          <input type="number" value={config.ocr_check_interval} min={1} max={10}
+            onChange={(e) => update('ocr_check_interval', parseInt(e.target.value) || 3)} />
+        </div>
+        <div className="form-group">
+          <label>触发关键词（逗号分隔）</label>
+          <input value={config.ocr_trigger_keywords}
+            onChange={(e) => update('ocr_trigger_keywords', e.target.value)}
+            placeholder="怎么,如何,能不能,请问..." />
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>
+            包含这些词的新消息会优先调用视觉API精准分析
+          </div>
         </div>
       </div>
 

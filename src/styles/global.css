@@ -1036,3 +1036,29 @@ body {
   color: var(--text-dim);
   text-align: center;
 }
+
+/* ========================================
+   Header Back Button (Settings)
+   ======================================== */
+.header-back {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 8px 0;
+  transition: var(--transition);
+}
+
+.header-back svg {
+  width: 18px;
+  height: 18px;
+}
+
+.header-back:active {
+  opacity: 0.6;
+}

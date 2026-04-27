@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from Quartz import CGWindowListCopyWindowInfo, CGWindowListCreateImage, kCGNullWindowID, kCGWindowListOptionAll, kCGWindowListExcludeDesktopElements
 
-SCREENSHOTS_DIR = os.path.expanduser("~/Desktop/screenshots")
+SCREENSHOTS_DIR = os.path.expanduser("/tmp/screenshots")
 
 def _ensure_screenshots_dir():
     Path(SCREENSHOTS_DIR).mkdir(parents=True, exist_ok=True)

@@ -235,6 +235,15 @@ ipcMain.handle('save-config', async (_e, config: any) => {
       },
       reply_delay_min: config.reply_delay_min || 1,
       reply_delay_max: config.reply_delay_max || 3,
+
+      ocr: {
+        enabled: config.ocr_enabled ?? true,
+        fast_mode: config.ocr_fast_mode ?? true,
+        check_interval: config.ocr_check_interval || 3,
+        languages: ["zh-Hans", "en"],
+        trigger_keywords: config.ocr_trigger_keywords || "",
+      },
+
     };
     fs.writeFileSync(CONFIG_PATH, yaml.dump(nestedConfig), 'utf-8');
     return true;

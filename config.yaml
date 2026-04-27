@@ -18,3 +18,11 @@ escalation:
   max_unsolved_rounds: 5
 reply_delay_min: 1
 reply_delay_max: 3
+ocr:
+  enabled: true
+  fast_mode: true
+  check_interval: 3
+  languages:
+    - zh-Hans
+    - en
+  trigger_keywords: 退货

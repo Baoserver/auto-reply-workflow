@@ -43,7 +43,7 @@ const TabIcon = ({ name, active }: { name: string; active: boolean }) => {
         </svg>
       );
     default:
-      return null;
+        return null;
   }
 };
 
@@ -112,6 +112,8 @@ export default function App() {
         return <ChatMonitor events={events} />;
       case 'me':
         return <KnowledgeManager />;
+      case 'settings':
+        return <ConfigPanel />;
       default:
         return null;
     }
@@ -120,61 +122,76 @@ export default function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <span className="header-title">智回复</span>
-        <button className="header-settings" title="设置">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-          </svg>
-        </button>
+        {tab === 'settings' ? (
+          <button className="header-back" onClick={() => setTab('home')}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+            <span>返回</span>
+          </button>
+        ) : (
+          <span className="header-title">智回复</span>
+        )}
+        {tab !== 'settings' && (
+          <button className="header-settings" title="设置" onClick={() => setTab('settings')}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
+        )}
       </header>
 
       <main className="app-content">
         {renderContent()}
       </main>
 
-      <div className="action-bar">
-        <button className={`action-btn ${running ? 'stop' : 'start'}`} onClick={handleStartStop}>
-          {running ? (
-            <>
-              <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                <rect x="6" y="4" width="4" height="16" rx="1"/>
-                <rect x="14" y="4" width="4" height="16" rx="1"/>
+      {tab !== 'settings' && (
+        <>
+          <div className="action-bar">
+            <button className={`action-btn ${running ? 'stop' : 'start'}`} onClick={handleStartStop}>
+              {running ? (
+                <>
+                  <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                    <rect x="6" y="4" width="4" height="16" rx="1"/>
+                    <rect x="14" y="4" width="4" height="16" rx="1"/>
+                  </svg>
+                  暂停服务
+                </>
+              ) : (
+                <>
+                  <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                    <polygon points="5 3 19 12 5 21 5 3"/>
+                  </svg>
+                  开始识别
+                </>
+              )}
+            </button>
+            <button className="action-btn secondary" onClick={() => setTab('log')}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
               </svg>
-              暂停服务
-            </>
-          ) : (
-            <>
-              <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                <polygon points="5 3 19 12 5 21 5 3"/>
-              </svg>
-              开始识别
-            </>
-          )}
-        </button>
-        <button className="action-btn secondary" onClick={() => setTab('log')}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-            <polyline points="14 2 14 8 20 8"/>
-          </svg>
-          查看日志
-        </button>
-      </div>
+              查看日志
+            </button>
+          </div>
 
-      <nav className="bottom-tabs">
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            className={`bottom-tab ${tab === t.key ? 'active' : ''}`}
-            onClick={() => setTab(t.key)}
-          >
-            <div className="bottom-tab-icon">
-              <TabIcon name={t.icon} active={tab === t.key} />
-            </div>
-            <span className="bottom-tab-label">{t.label}</span>
-          </button>
-        ))}
-      </nav>
+          <nav className="bottom-tabs">
+            {tabs.map((t) => (
+              <button
+                key={t.key}
+                className={`bottom-tab ${tab === t.key ? 'active' : ''}`}
+                onClick={() => setTab(t.key)}
+              >
+                <div className="bottom-tab-icon">
+                  <TabIcon name={t.icon} active={tab === t.key} />
+                </div>
+                <span className="bottom-tab-label">{t.label}</span>
+              </button>
+            ))}
+          </nav>
+        </>
+      )}
     </div>
   );
 }
