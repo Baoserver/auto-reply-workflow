@@ -13,6 +13,14 @@ interface OpenClawAgent {
   name: string;
 }
 
+interface OpenClawConfig {
+  enabled: boolean;
+  cli_path: string;
+  timeout_seconds: number;
+  extra_prompt: string;
+  routes: OpenClawRoute[];
+}
+
 interface Config {
   minimax_api_key: string;
   minimax_group_id: string;
@@ -33,12 +41,17 @@ interface Config {
   ocr_chat_region_mode: 'auto' | 'fixed';
   ocr_chat_region: number[];
   ocr_trigger_keywords: string;
-  openclaw_enabled: boolean;
-  openclaw_cli_path: string;
-  openclaw_timeout_seconds: number;
-  openclaw_extra_prompt: string;
-  openclaw_routes: OpenClawRoute[];
+  openclaw_customer: OpenClawConfig;
+  openclaw_assistant: OpenClawConfig;
 }
+
+const DEFAULT_OPENCLAW_CONFIG: OpenClawConfig = {
+  enabled: false,
+  cli_path: '/opt/homebrew/bin/openclaw',
+  timeout_seconds: 120,
+  extra_prompt: '',
+  routes: [],
+};
 
 const DEFAULT_CONFIG: Config = {
   minimax_api_key: '',
@@ -60,12 +73,33 @@ const DEFAULT_CONFIG: Config = {
   ocr_chat_region_mode: 'auto',
   ocr_chat_region: [0.35, 0, 1, 1],
   ocr_trigger_keywords: '怎么,如何,能不能,请问,价格,发货,退款,投诉,订单,物流,客服,帮助,问题',
-  openclaw_enabled: false,
-  openclaw_cli_path: '/opt/homebrew/bin/openclaw',
-  openclaw_timeout_seconds: 120,
-  openclaw_extra_prompt: '',
-  openclaw_routes: [],
+  openclaw_customer: { ...DEFAULT_OPENCLAW_CONFIG },
+  openclaw_assistant: { ...DEFAULT_OPENCLAW_CONFIG },
 };
+
+function normalizeOpenClawRoutes(routes: any): OpenClawRoute[] {
+  return Array.isArray(routes)
+    ? routes.map((route: any) => ({
+      enabled: route.enabled ?? true,
+      keywords: Array.isArray(route.keywords) ? route.keywords.join(',') : (route.keywords || ''),
+      agent_id: route.agent_id || '',
+      agent_name: route.agent_name || '',
+      extra_prompt: route.extra_prompt || '',
+    }))
+    : [];
+}
+
+function normalizeOpenClawConfig(openclaw: any, mode: 'customer' | 'assistant'): OpenClawConfig {
+  const isNested = openclaw?.customer || openclaw?.assistant;
+  const cfg = isNested ? (openclaw?.[mode] || {}) : (openclaw || {});
+  return {
+    enabled: cfg.enabled ?? DEFAULT_OPENCLAW_CONFIG.enabled,
+    cli_path: cfg.cli_path || DEFAULT_OPENCLAW_CONFIG.cli_path,
+    timeout_seconds: cfg.timeout_seconds || DEFAULT_OPENCLAW_CONFIG.timeout_seconds,
+    extra_prompt: cfg.extra_prompt || '',
+    routes: normalizeOpenClawRoutes(cfg.routes),
+  };
+}
 
 function flattenConfig(loaded: any): Config {
   return {
@@ -88,19 +122,8 @@ function flattenConfig(loaded: any): Config {
     ocr_chat_region_mode: loaded.ocr?.chat_region_mode || 'auto',
     ocr_chat_region: Array.isArray(loaded.ocr?.chat_region) ? loaded.ocr.chat_region : [0.35, 0, 1, 1],
     ocr_trigger_keywords: loaded.ocr?.trigger_keywords || DEFAULT_CONFIG.ocr_trigger_keywords,
-    openclaw_enabled: loaded.openclaw?.enabled ?? false,
-    openclaw_cli_path: loaded.openclaw?.cli_path || '/opt/homebrew/bin/openclaw',
-    openclaw_timeout_seconds: loaded.openclaw?.timeout_seconds || 120,
-    openclaw_extra_prompt: loaded.openclaw?.extra_prompt || '',
-    openclaw_routes: Array.isArray(loaded.openclaw?.routes)
-      ? loaded.openclaw.routes.map((route: any) => ({
-        enabled: route.enabled ?? true,
-        keywords: Array.isArray(route.keywords) ? route.keywords.join(',') : (route.keywords || ''),
-        agent_id: route.agent_id || '',
-        agent_name: route.agent_name || '',
-        extra_prompt: route.extra_prompt || '',
-      }))
-      : [],
+    openclaw_customer: normalizeOpenClawConfig(loaded.openclaw, 'customer'),
+    openclaw_assistant: normalizeOpenClawConfig(loaded.openclaw, 'assistant'),
   };
 }
 
@@ -112,7 +135,7 @@ export default function WorkflowPanel() {
   const [openClawAgents, setOpenClawAgents] = useState<OpenClawAgent[]>([]);
 
   useEffect(() => {
-    const loadAgents = async (cliPath = DEFAULT_CONFIG.openclaw_cli_path) => {
+    const loadAgents = async (cliPath = DEFAULT_OPENCLAW_CONFIG.cli_path) => {
       if (!window.electronAPI?.listOpenClawAgents) return;
       setAgentsLoading(true);
       try {
@@ -143,7 +166,10 @@ export default function WorkflowPanel() {
         if (loaded && Object.keys(loaded).length > 0) {
           const flattened = flattenConfig(loaded);
           setConfig(flattened);
-          loadAgents(flattened.openclaw_cli_path);
+          const activeOpenClaw = flattened.workflow_mode === 'assistant'
+            ? flattened.openclaw_assistant
+            : flattened.openclaw_customer;
+          loadAgents(activeOpenClaw.cli_path);
         } else {
           loadAgents();
         }
@@ -176,36 +202,62 @@ export default function WorkflowPanel() {
     setConfig((prev) => ({ ...prev, [key]: value }));
   };
 
+  const activeOpenClawKey = config.workflow_mode === 'assistant' ? 'openclaw_assistant' : 'openclaw_customer';
+  const activeOpenClaw = config[activeOpenClawKey];
+  const openClawModeLabel = config.workflow_mode === 'assistant' ? '助手模式' : '客服模式';
+  const openClawEmptyText = config.workflow_mode === 'assistant'
+    ? '暂无路由规则，助手模式不会触发 OpenClaw。'
+    : '暂无路由规则，未命中时会回退 MiniMax。';
+
+  const updateActiveOpenClaw = (patch: Partial<OpenClawConfig>) => {
+    setConfig((prev) => ({
+      ...prev,
+      [activeOpenClawKey]: {
+        ...prev[activeOpenClawKey],
+        ...patch,
+      },
+    }));
+  };
+
   const addOpenClawRoute = () => {
     const firstAgent = openClawAgents[0];
     setConfig((prev) => ({
       ...prev,
-      openclaw_routes: [
-        ...prev.openclaw_routes,
-        {
-          enabled: true,
-          keywords: '',
-          agent_id: firstAgent?.id || '',
-          agent_name: firstAgent?.name || '',
-          extra_prompt: '',
-        },
-      ],
+      [activeOpenClawKey]: {
+        ...prev[activeOpenClawKey],
+        routes: [
+          ...prev[activeOpenClawKey].routes,
+          {
+            enabled: true,
+            keywords: '',
+            agent_id: firstAgent?.id || '',
+            agent_name: firstAgent?.name || '',
+            extra_prompt: '',
+          },
+        ],
+      },
     }));
   };
 
   const updateOpenClawRoute = (index: number, patch: Partial<OpenClawRoute>) => {
     setConfig((prev) => ({
       ...prev,
-      openclaw_routes: prev.openclaw_routes.map((route, i) => (
-        i === index ? { ...route, ...patch } : route
-      )),
+      [activeOpenClawKey]: {
+        ...prev[activeOpenClawKey],
+        routes: prev[activeOpenClawKey].routes.map((route, i) => (
+          i === index ? { ...route, ...patch } : route
+        )),
+      },
     }));
   };
 
   const removeOpenClawRoute = (index: number) => {
     setConfig((prev) => ({
       ...prev,
-      openclaw_routes: prev.openclaw_routes.filter((_, i) => i !== index),
+      [activeOpenClawKey]: {
+        ...prev[activeOpenClawKey],
+        routes: prev[activeOpenClawKey].routes.filter((_, i) => i !== index),
+      },
     }));
   };
 
@@ -221,7 +273,7 @@ export default function WorkflowPanel() {
     if (!window.electronAPI?.listOpenClawAgents) return;
     setAgentsLoading(true);
     try {
-      const agents = await window.electronAPI.listOpenClawAgents(config.openclaw_cli_path);
+      const agents = await window.electronAPI.listOpenClawAgents(activeOpenClaw.cli_path);
       setOpenClawAgents(agents || []);
     } catch (e) {
       console.error('Failed to refresh OpenClaw agents:', e);
@@ -309,7 +361,7 @@ export default function WorkflowPanel() {
 
       <div className="card">
         <div className="card-header">
-          <span className="card-title">OpenClaw 工作流</span>
+          <span className="card-title">OpenClaw 工作流（{openClawModeLabel}）</span>
           <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
             {agentsLoading ? '读取 Agent 中...' : (openClawAgents.length > 0 ? `${openClawAgents.length} 个 Agent` : '可手动输入 Agent ID')}
           </span>
@@ -318,16 +370,16 @@ export default function WorkflowPanel() {
           <label>启用 OpenClaw 回复</label>
           <div className="checkbox-group">
             <label className="checkbox-label">
-              <input type="checkbox" checked={config.openclaw_enabled}
-                onChange={(e) => update('openclaw_enabled', e.target.checked)} />
-              {config.openclaw_enabled ? '已开启' : '已关闭'}
+              <input type="checkbox" checked={activeOpenClaw.enabled}
+                onChange={(e) => updateActiveOpenClaw({ enabled: e.target.checked })} />
+              {activeOpenClaw.enabled ? '已开启' : '已关闭'}
             </label>
           </div>
         </div>
         <div className="form-group">
           <label>CLI 路径</label>
-          <input value={config.openclaw_cli_path}
-            onChange={(e) => update('openclaw_cli_path', e.target.value)}
+          <input value={activeOpenClaw.cli_path}
+            onChange={(e) => updateActiveOpenClaw({ cli_path: e.target.value })}
             placeholder="/opt/homebrew/bin/openclaw" />
           <button className="btn-sm" onClick={refreshOpenClawAgents} style={{ marginTop: 10 }}>
             {agentsLoading ? '刷新中...' : '刷新 Agent 列表'}
@@ -335,24 +387,24 @@ export default function WorkflowPanel() {
         </div>
         <div className="form-group">
           <label>超时时间（秒）</label>
-          <input type="number" value={config.openclaw_timeout_seconds} min={10} max={600}
-            onChange={(e) => update('openclaw_timeout_seconds', parseInt(e.target.value) || 120)} />
+          <input type="number" value={activeOpenClaw.timeout_seconds} min={10} max={600}
+            onChange={(e) => updateActiveOpenClaw({ timeout_seconds: parseInt(e.target.value) || 120 })} />
         </div>
         <div className="form-group">
           <label>额外提示词</label>
-          <textarea value={config.openclaw_extra_prompt}
-            onChange={(e) => update('openclaw_extra_prompt', e.target.value)}
+          <textarea value={activeOpenClaw.extra_prompt}
+            onChange={(e) => updateActiveOpenClaw({ extra_prompt: e.target.value })}
             placeholder="例如：回复需简洁、语气友好，遇到价格争议提醒人工确认。" />
         </div>
         <div className="form-group">
           <label>关键词路由</label>
-          {config.openclaw_routes.length === 0 ? (
+          {activeOpenClaw.routes.length === 0 ? (
             <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
-              暂无路由规则，未命中时会回退 MiniMax。
+              {openClawEmptyText}
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {config.openclaw_routes.map((route, index) => (
+              {activeOpenClaw.routes.map((route, index) => (
                 <div key={index} style={{
                   border: '1px solid var(--border)',
                   borderRadius: 8,

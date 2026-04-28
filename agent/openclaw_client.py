@@ -27,13 +27,30 @@ class OpenClawRoute:
 
 
 class OpenClawClient:
-    def __init__(self, config: dict):
-        cfg = config.get("openclaw", {}) or {}
+    def __init__(self, config: dict, mode: str = "customer"):
+        self.mode = mode if mode in {"customer", "assistant"} else "customer"
+        cfg = self._resolve_config(config, self.mode)
         self.enabled = bool(cfg.get("enabled", False))
         self.cli_path = cfg.get("cli_path") or DEFAULT_CLI_PATH
         self.timeout_seconds = int(cfg.get("timeout_seconds") or 120)
         self.extra_prompt = cfg.get("extra_prompt", "") or ""
         self.routes = cfg.get("routes", []) or []
+
+    def _resolve_config(self, config: dict, mode: str) -> dict:
+        raw = config.get("openclaw", {}) or {}
+        if not isinstance(raw, dict):
+            return {}
+
+        mode_cfg = raw.get(mode)
+        if isinstance(mode_cfg, dict):
+            return mode_cfg
+
+        # Backward compatibility: old versions stored one flat openclaw block.
+        legacy_keys = {"enabled", "cli_path", "timeout_seconds", "extra_prompt", "routes"}
+        if any(key in raw for key in legacy_keys):
+            return raw
+
+        return {}
 
     def match_route(self, message: str) -> OpenClawRoute | None:
         """按配置顺序查找第一条命中的启用路由。"""

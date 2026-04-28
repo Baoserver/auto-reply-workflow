@@ -22,7 +22,7 @@ reply_delay_max: 3
 ocr:
   enabled: true
   fast_mode: false
-  check_interval: 3
+  check_interval: 20
   chat_region_mode: auto
   chat_region:
     - 0.35
@@ -32,15 +32,27 @@ ocr:
   languages:
     - zh-Hans
     - en
-  trigger_keywords: 退货
+  trigger_keywords: 转人工
 openclaw:
-  enabled: true
-  cli_path: /opt/homebrew/bin/openclaw
-  timeout_seconds: 120
-  extra_prompt: ''
-  routes:
-    - enabled: true
-      keywords: 任务收到
-      agent_id: qinwu-yuan
-      agent_name: 勤务猿
-      extra_prompt: 根据上述对话信息，在飞书任务中创建任务。并最后给我返回任务名称
+  customer:
+    enabled: true
+    cli_path: /opt/homebrew/bin/openclaw
+    timeout_seconds: 120
+    extra_prompt: ''
+    routes:
+      - enabled: true
+        keywords: 任务收到
+        agent_id: qinwu-yuan
+        agent_name: 勤务猿
+        extra_prompt: 根据上述对话信息，在飞书任务中创建任务。并最后给我返回任务名称
+  assistant:
+    enabled: true
+    cli_path: /opt/homebrew/bin/openclaw
+    timeout_seconds: 120
+    extra_prompt: ''
+    routes:
+      - enabled: true
+        keywords: 任务收到
+        agent_id: qinwu-yuan
+        agent_name: 勤务猿
+        extra_prompt: 根据上述对话信息，在飞书任务中创建任务。并最后给我返回任务名称

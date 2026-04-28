@@ -64,6 +64,29 @@ const CONFIG_PATH = getConfigPath();
 const KNOWLEDGE_DIR = getKnowledgeDir();
 const DEFAULT_OPENCLAW_CLI_PATH = '/opt/homebrew/bin/openclaw';
 
+function normalizeOpenClawRoutes(routes: any) {
+  return Array.isArray(routes) ? routes : [];
+}
+
+function normalizeOpenClawConfig(config: any, mode: 'customer' | 'assistant') {
+  const nested = mode === 'assistant' ? config.openclaw_assistant : config.openclaw_customer;
+  const legacy = {
+    enabled: config.openclaw_enabled,
+    cli_path: config.openclaw_cli_path,
+    timeout_seconds: config.openclaw_timeout_seconds,
+    extra_prompt: config.openclaw_extra_prompt,
+    routes: config.openclaw_routes,
+  };
+  const source = nested && typeof nested === 'object' ? nested : legacy;
+  return {
+    enabled: source.enabled ?? false,
+    cli_path: source.cli_path || DEFAULT_OPENCLAW_CLI_PATH,
+    timeout_seconds: source.timeout_seconds || 120,
+    extra_prompt: source.extra_prompt || '',
+    routes: normalizeOpenClawRoutes(source.routes),
+  };
+}
+
 function createTrayIcon() {
   const size = 16;
   const img = nativeImage.createEmpty();
@@ -447,11 +470,8 @@ ipcMain.handle('save-config', async (_e, config: any) => {
         trigger_keywords: config.ocr_trigger_keywords || "",
       },
       openclaw: {
-        enabled: config.openclaw_enabled ?? false,
-        cli_path: config.openclaw_cli_path || DEFAULT_OPENCLAW_CLI_PATH,
-        timeout_seconds: config.openclaw_timeout_seconds || 120,
-        extra_prompt: config.openclaw_extra_prompt || '',
-        routes: Array.isArray(config.openclaw_routes) ? config.openclaw_routes : [],
+        customer: normalizeOpenClawConfig(config, 'customer'),
+        assistant: normalizeOpenClawConfig(config, 'assistant'),
       },
 
     };

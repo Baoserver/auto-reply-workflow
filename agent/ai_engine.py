@@ -20,7 +20,7 @@ class AIEngine:
         self.model = config.get("minimax", {}).get("text_model", "MiniMax-Text-01")
         self.base_url = "https://api.minimax.chat/v1/chat/completions"
         self.knowledge_context = ""
-        self.openclaw = OpenClawClient(config)
+        self.openclaw = OpenClawClient(config, mode="customer")
         self._load_knowledge()
 
     def _load_knowledge(self):

@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from screen_capture import ScreenCapture
 from vision import VisionAnalyzer
 from ai_engine import AIEngine
+from openclaw_client import OpenClawClient
 from wechat_operator import WeChatOperator
 from wechat_detector import WeChatDetector
 from escalation import EscalationChecker
@@ -47,6 +48,7 @@ class Agent:
     def _build_runtime(self):
         self.vision = VisionAnalyzer(self.config)
         self.ai = AIEngine(self.config)
+        self.assistant_openclaw = OpenClawClient(self.config, mode="assistant")
         self.detector = WeChatDetector(self.capture, self.vision, self.config)
         self.escalation = EscalationChecker(self.config)
         self.feishu = FeishuBot(self.config)
@@ -165,7 +167,7 @@ class Agent:
                 pass
 
         try:
-            openclaw_result = self.ai.openclaw.run_agent_detail(
+            openclaw_result = self.assistant_openclaw.run_agent_detail(
                 route=route,
                 message=trigger_text,
                 channel=channel,

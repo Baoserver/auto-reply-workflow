@@ -50,9 +50,9 @@ class WeChatDetector:
         self.capture = capture
         self.vision = vision
         self.config = config
-        self.local_ocr = LocalOCR(config)
-        self.openclaw = OpenClawClient(config)
         self.workflow_mode = config.get("workflow_mode", "customer")
+        self.local_ocr = LocalOCR(config)
+        self.openclaw = OpenClawClient(config, mode=self.workflow_mode)
 
         self._running = False
         self._thread = None
@@ -64,8 +64,8 @@ class WeChatDetector:
 
         ocr_cfg = config.get("ocr", {})
         self.trigger_keywords = [k.strip() for k in ocr_cfg.get("trigger_keywords", "").split(",") if k.strip()]
-        # 自动合并 OpenClaw 路由关键词到触发词
-        for route in config.get("openclaw", {}).get("routes", []):
+        # 只合并当前工作模式的 OpenClaw 路由关键词，避免客服/助手路由串用。
+        for route in self.openclaw.routes:
             if route.get("enabled", True):
                 for kw in str(route.get("keywords", "")).replace("，", ",").split(","):
                     kw = kw.strip()
