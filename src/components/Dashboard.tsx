@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 interface AgentEvent {
   type: string;
@@ -8,18 +8,36 @@ interface AgentEvent {
 interface Props {
   running: boolean;
   stats: {
-    keywordHits: number;
-    visionRecognitions: number;
-    aiReplies: number;
-    escalations: number;
+    day: DashboardStats;
+    month: DashboardStats;
+    year: DashboardStats;
+    total: DashboardStats;
   };
   connections?: { wechat: boolean; wecom: boolean };
   events?: AgentEvent[];
 }
 
+type StatsRange = 'day' | 'month' | 'year' | 'total';
+
+interface DashboardStats {
+  keywordHits: number;
+  visionRecognitions: number;
+  aiReplies: number;
+  escalations: number;
+}
+
+const STAT_TABS: Array<{ key: StatsRange; label: string; hint: string }> = [
+  { key: 'day', label: '日', hint: '今日' },
+  { key: 'month', label: '月', hint: '本月' },
+  { key: 'year', label: '年', hint: '今年' },
+  { key: 'total', label: '总', hint: '累计' },
+];
+
 export default function Dashboard({ running, stats, connections, events = [] }: Props) {
+  const [statsRange, setStatsRange] = useState<StatsRange>('day');
   const wechatConnected = connections?.wechat ?? false;
   const wecomConnected = connections?.wecom ?? false;
+  const currentStats = stats[statsRange];
 
   const isRouteMatchedLog = (ev: AgentEvent) => {
     if (ev.type !== 'log') return false;
@@ -240,26 +258,43 @@ export default function Dashboard({ running, stats, connections, events = [] }: 
       </section>
 
       <section className="home-matrix">
-        <div className="home-stat-grid">
-          <div className="home-metric is-keyword">
-            <span className="home-metric-label">关键字命中</span>
-            <strong>{stats.keywordHits}</strong>
-            <small>路由触发</small>
-          </div>
-          <div className="home-metric is-vision">
-            <span className="home-metric-label">Vision识别</span>
-            <strong>{stats.visionRecognitions}</strong>
-            <small>视觉分析</small>
-          </div>
-          <div className="home-metric is-reply">
-            <span className="home-metric-label">AI回复</span>
-            <strong>{stats.aiReplies}</strong>
-            <small>已生成</small>
-          </div>
-          <div className="home-metric is-escalation">
-            <span className="home-metric-label">转人工</span>
-            <strong>{stats.escalations}</strong>
-            <small>{stats.escalations > 0 ? '需关注' : '暂无'}</small>
+        <div className="home-stats-card">
+          <div className="home-stats-body">
+            <div className="home-stats-tabs" aria-label="统计周期">
+              {STAT_TABS.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`home-stats-tab ${statsRange === item.key ? 'active' : ''}`}
+                  onClick={() => setStatsRange(item.key)}
+                >
+                  <span>{item.label}</span>
+                  <small>{item.hint}</small>
+                </button>
+              ))}
+            </div>
+            <div className="home-stat-grid">
+              <div className="home-metric is-keyword">
+                <span className="home-metric-label">关键字命中</span>
+                <strong>{currentStats.keywordHits}</strong>
+                <small>路由触发</small>
+              </div>
+              <div className="home-metric is-vision">
+                <span className="home-metric-label">Vision识别</span>
+                <strong>{currentStats.visionRecognitions}</strong>
+                <small>视觉分析</small>
+              </div>
+              <div className="home-metric is-reply">
+                <span className="home-metric-label">AI回复</span>
+                <strong>{currentStats.aiReplies}</strong>
+                <small>已生成</small>
+              </div>
+              <div className="home-metric is-escalation">
+                <span className="home-metric-label">转人工</span>
+                <strong>{currentStats.escalations}</strong>
+                <small>{currentStats.escalations > 0 ? '需关注' : '暂无'}</small>
+              </div>
+            </div>
           </div>
         </div>
         <div className="home-channel-card">

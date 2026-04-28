@@ -287,11 +287,90 @@ select:focus-visible {
 }
 
 .home-stat-grid {
-  grid-area: stats;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-template-rows: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 9px;
+  min-width: 0;
+}
+
+.home-stats-card {
+  grid-area: stats;
+  display: block;
+  min-width: 0;
+  background: var(--surface);
+  border: 3px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 3px 3px 0 var(--border);
+  padding: 0;
+  overflow: hidden;
+}
+
+.home-stats-body {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  gap: 0;
+  height: 100%;
+}
+
+.home-stats-tabs {
+  display: grid;
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  background: var(--surface-tertiary);
+}
+
+.home-stats-tab {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  gap: 1px;
+  padding: 5px 2px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 0;
+  border-right: 3px solid var(--border);
+  border-bottom: 3px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+  cursor: pointer;
+  transition: var(--transition);
+  position: relative;
+}
+
+.home-stats-tab:last-child {
+  border-bottom: 0;
+}
+
+.home-stats-tab span {
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.home-stats-tab small {
+  font-size: 9px;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.home-stats-tab.active {
+  background: var(--surface);
+  color: var(--text);
+  border-right-color: transparent;
+  transform: none;
+  box-shadow: 3px 0 0 var(--surface);
+  z-index: 2;
+}
+
+.home-stats-tab:active {
+  transform: none;
+  box-shadow: 3px 0 0 var(--surface);
+}
+
+.home-stats-card .home-stat-grid {
+  padding: 9px;
 }
 
 .home-metric,
@@ -300,11 +379,17 @@ select:focus-visible {
   border: 3px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: 3px 3px 0 var(--border);
-  padding: 8px;
+  padding: 7px;
 }
 
 .home-metric {
   min-width: 0;
+  min-height: 78px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  border-width: 3px;
+  box-shadow: none;
 }
 
 .home-metric.is-keyword {
@@ -338,11 +423,17 @@ select:focus-visible {
   white-space: nowrap;
 }
 
+.home-metric .home-metric-label {
+  margin-bottom: 0;
+  padding: 2px 5px;
+  font-size: 9px;
+}
+
 .home-metric strong {
   display: block;
   font-family: var(--font-mono);
   color: var(--text);
-  font-size: 23px;
+  font-size: 26px;
   line-height: 0.95;
   font-weight: 900;
   letter-spacing: 0;
@@ -350,7 +441,7 @@ select:focus-visible {
 
 .home-metric small {
   display: block;
-  margin-top: 3px;
+  margin-top: 0;
   color: var(--text-secondary);
   font-size: 9px;
   font-weight: 900;

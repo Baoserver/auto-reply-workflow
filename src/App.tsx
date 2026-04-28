@@ -24,6 +24,16 @@ interface DashboardStats {
   escalations: number;
 }
 
+interface DashboardStatsStore {
+  dayKey: string;
+  monthKey: string;
+  yearKey: string;
+  day: DashboardStats;
+  month: DashboardStats;
+  year: DashboardStats;
+  total: DashboardStats;
+}
+
 const DEFAULT_MAIN_WIDTH = 430;
 const DEFAULT_LOG_WIDTH = 390;
 const MIN_MAIN_WIDTH = 375;
@@ -41,21 +51,79 @@ const EMPTY_DASHBOARD_STATS: DashboardStats = {
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
 const todayKey = () => new Date().toISOString().slice(0, 10);
+const monthKey = () => todayKey().slice(0, 7);
+const yearKey = () => todayKey().slice(0, 4);
 
-const loadDashboardStats = (): DashboardStats => {
+const emptyStats = (): DashboardStats => ({ ...EMPTY_DASHBOARD_STATS });
+
+const normalizeStats = (value: any): DashboardStats => ({
+  keywordHits: Number(value?.keywordHits) || 0,
+  visionRecognitions: Number(value?.visionRecognitions) || 0,
+  aiReplies: Number(value?.aiReplies) || 0,
+  escalations: Number(value?.escalations) || 0,
+});
+
+const normalizeStatsStore = (store: DashboardStatsStore): DashboardStatsStore => {
+  const currentDay = todayKey();
+  const currentMonth = monthKey();
+  const currentYear = yearKey();
+  return {
+    ...store,
+    dayKey: currentDay,
+    monthKey: currentMonth,
+    yearKey: currentYear,
+    day: store.dayKey === currentDay ? store.day : emptyStats(),
+    month: store.monthKey === currentMonth ? store.month : emptyStats(),
+    year: store.yearKey === currentYear ? store.year : emptyStats(),
+  };
+};
+
+const loadDashboardStats = (): DashboardStatsStore => {
   try {
     const stored = localStorage.getItem(STATS_STORAGE_KEY);
-    if (!stored) return EMPTY_DASHBOARD_STATS;
+    if (!stored) {
+      return normalizeStatsStore({
+        dayKey: todayKey(),
+        monthKey: monthKey(),
+        yearKey: yearKey(),
+        day: emptyStats(),
+        month: emptyStats(),
+        year: emptyStats(),
+        total: emptyStats(),
+      });
+    }
     const parsed = JSON.parse(stored);
-    if (parsed?.date !== todayKey()) return EMPTY_DASHBOARD_STATS;
-    return {
-      keywordHits: Number(parsed.keywordHits) || 0,
-      visionRecognitions: Number(parsed.visionRecognitions) || 0,
-      aiReplies: Number(parsed.aiReplies) || 0,
-      escalations: Number(parsed.escalations) || 0,
-    };
+    if (parsed?.day || parsed?.month || parsed?.year || parsed?.total) {
+      return normalizeStatsStore({
+        dayKey: parsed.dayKey || parsed.date || todayKey(),
+        monthKey: parsed.monthKey || monthKey(),
+        yearKey: parsed.yearKey || yearKey(),
+        day: normalizeStats(parsed.day),
+        month: normalizeStats(parsed.month),
+        year: normalizeStats(parsed.year),
+        total: normalizeStats(parsed.total),
+      });
+    }
+    const migrated = normalizeStats(parsed);
+    return normalizeStatsStore({
+      dayKey: parsed?.date || todayKey(),
+      monthKey: monthKey(),
+      yearKey: yearKey(),
+      day: migrated,
+      month: migrated,
+      year: migrated,
+      total: migrated,
+    });
   } catch {
-    return EMPTY_DASHBOARD_STATS;
+    return normalizeStatsStore({
+      dayKey: todayKey(),
+      monthKey: monthKey(),
+      yearKey: yearKey(),
+      day: emptyStats(),
+      month: emptyStats(),
+      year: emptyStats(),
+      total: emptyStats(),
+    });
   }
 };
 
@@ -66,20 +134,31 @@ const isRouteMatchedEvent = (event: AgentEvent) => {
   return /助手模式命中路由|OpenClaw route matched|route matched/i.test(message);
 };
 
-const incrementStatsForEvent = (stats: DashboardStats, event: AgentEvent): DashboardStats => {
+const incrementStats = (stats: DashboardStats, key: keyof DashboardStats): DashboardStats => ({
+  ...stats,
+  [key]: stats[key] + 1,
+});
+
+const incrementStatsForEvent = (store: DashboardStatsStore, event: AgentEvent): DashboardStatsStore => {
+  const normalized = normalizeStatsStore(store);
+  let key: keyof DashboardStats | null = null;
   if (isRouteMatchedEvent(event)) {
-    return { ...stats, keywordHits: stats.keywordHits + 1 };
+    key = 'keywordHits';
+  } else if (event.type === 'vision') {
+    key = 'visionRecognitions';
+  } else if (event.type === 'reply') {
+    key = 'aiReplies';
+  } else if (event.type === 'escalation') {
+    key = 'escalations';
   }
-  if (event.type === 'vision') {
-    return { ...stats, visionRecognitions: stats.visionRecognitions + 1 };
-  }
-  if (event.type === 'reply') {
-    return { ...stats, aiReplies: stats.aiReplies + 1 };
-  }
-  if (event.type === 'escalation') {
-    return { ...stats, escalations: stats.escalations + 1 };
-  }
-  return stats;
+  if (!key) return normalized;
+  return {
+    ...normalized,
+    day: incrementStats(normalized.day, key),
+    month: incrementStats(normalized.month, key),
+    year: incrementStats(normalized.year, key),
+    total: incrementStats(normalized.total, key),
+  };
 };
 
 const TabIcon = ({ name, active }: { name: string; active: boolean }) => {
@@ -133,7 +212,7 @@ export default function App() {
   const [mainWidth, setMainWidth] = useState(DEFAULT_MAIN_WIDTH);
   const [logWidth, setLogWidth] = useState(DEFAULT_LOG_WIDTH);
   const [events, setEvents] = useState<AgentEvent[]>([]);
-  const [stats, setStats] = useState<DashboardStats>(() => loadDashboardStats());
+  const [stats, setStats] = useState<DashboardStatsStore>(() => loadDashboardStats());
   const [connections, setConnections] = useState<Connection>({ wechat: false, wecom: false });
   const paneSyncRef = useRef(false);
   const paneSyncTimerRef = useRef<number | null>(null);
@@ -217,10 +296,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(STATS_STORAGE_KEY, JSON.stringify({
-      date: todayKey(),
-      ...stats,
-    }));
+    localStorage.setItem(STATS_STORAGE_KEY, JSON.stringify(stats));
   }, [stats]);
 
   useEffect(() => {
