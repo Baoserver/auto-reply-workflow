@@ -7,6 +7,8 @@ import { execSync } from 'child_process';
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let agentProcess: ChildProcess | null = null;
+let agentOnceProcess: ChildProcess | null = null;
+let autoStartTimer: NodeJS.Timeout | null = null;
 
 let LOG_FILE: string;
 const APP_WIDTH = 430;
@@ -120,40 +122,14 @@ function createTray() {
 
 // --- Python Agent 管理 ---
 
-function startAgent() {
-  if (agentProcess) return;
-
-  console.log('[startAgent] called, isPackaged:', app.isPackaged);
-  console.log('[startAgent] resourcesPath:', process.resourcesPath);
-
-  // Determine the correct path based on whether app is packaged
-  let agentPath: string;
+function getAgentPath(): string {
   if (app.isPackaged) {
-    // In packaged app, use process.resourcesPath
-    agentPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'agent', 'agent.py');
-  } else {
-    // In development, use the source agent directory
-    agentPath = path.join(__dirname, '../../agent/agent.py');
+    return path.join(process.resourcesPath, 'app.asar.unpacked', 'agent', 'agent.py');
   }
+  return path.join(__dirname, '../../agent/agent.py');
+}
 
-  log(`agentPath: ${agentPath}`);
-  log(`isPackaged: ${app.isPackaged}`);
-  log(`resourcesPath: ${process.resourcesPath}`);
-
-  try {
-    agentProcess = spawn('python3', [agentPath], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    log(`spawn succeeded, pid: ${agentProcess.pid}`);
-  } catch (err) {
-    log(`spawn error: ${err}`);
-    mainWindow?.webContents.send('agent-event', {
-      type: 'log',
-      data: { level: 'error', message: `启动失败: ${err}` },
-    });
-    return;
-  }
-
+function bindAgentEventStream(processRef: ChildProcess, label: string, onClose?: (code: number | null) => void) {
   let stdoutBuffer = '';
   const handleStdoutLine = (line: string) => {
     if (!line.trim()) return;
@@ -179,7 +155,7 @@ function startAgent() {
     }
   };
 
-  agentProcess.stdout?.on('data', (data: Buffer) => {
+  processRef.stdout?.on('data', (data: Buffer) => {
     stdoutBuffer += data.toString();
     const lines = stdoutBuffer.split('\n');
     stdoutBuffer = lines.pop() || '';
@@ -188,43 +164,124 @@ function startAgent() {
     }
   });
 
-  agentProcess.stderr?.on('data', (data: Buffer) => {
-    log(`AGENT STDERR: ${data.toString()}`);
+  processRef.stderr?.on('data', (data: Buffer) => {
+    log(`${label} STDERR: ${data.toString()}`);
     mainWindow?.webContents.send('agent-event', {
       type: 'log',
       data: { level: 'error', message: data.toString() },
     });
   });
 
-  agentProcess.on('error', (err) => {
-    log(`AGENT PROCESS ERROR: ${err}`);
+  processRef.on('error', (err) => {
+    log(`${label} PROCESS ERROR: ${err}`);
     mainWindow?.webContents.send('agent-event', {
       type: 'log',
       data: { level: 'error', message: `进程错误: ${err}` },
     });
   });
 
-  agentProcess.on('close', (code) => {
+  processRef.on('close', (code) => {
     if (stdoutBuffer.trim()) {
       handleStdoutLine(stdoutBuffer);
       stdoutBuffer = '';
     }
-    log(`AGENT CLOSE: ${code}`);
-    agentProcess = null;
+    log(`${label} CLOSE: ${code}`);
+    onClose?.(code);
+  });
+}
+
+function startAgent() {
+  if (agentProcess) return;
+
+  console.log('[startAgent] called, isPackaged:', app.isPackaged);
+  console.log('[startAgent] resourcesPath:', process.resourcesPath);
+
+  const agentPath = getAgentPath();
+
+  log(`agentPath: ${agentPath}`);
+  log(`isPackaged: ${app.isPackaged}`);
+  log(`resourcesPath: ${process.resourcesPath}`);
+
+  try {
+    agentProcess = spawn('python3', [agentPath], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    log(`spawn succeeded, pid: ${agentProcess.pid}`);
+  } catch (err) {
+    log(`spawn error: ${err}`);
+    mainWindow?.webContents.send('agent-event', {
+      type: 'log',
+      data: { level: 'error', message: `启动失败: ${err}` },
+    });
+    return;
+  }
+
+  const currentProcess = agentProcess;
+  bindAgentEventStream(currentProcess, 'AGENT', () => {
+    if (agentProcess === currentProcess) {
+      agentProcess = null;
+    }
   });
 
   // Send initial status after a short delay to ensure window is ready
   setTimeout(() => {
+    if (agentProcess !== currentProcess) return;
     log(`mainWindow exists: ${!!mainWindow}`);
     mainWindow?.webContents.send('agent-event', { type: 'status', data: { state: 'running' } });
   }, 1000);
 }
 
 function stopAgent() {
+  if (autoStartTimer) {
+    clearTimeout(autoStartTimer);
+    autoStartTimer = null;
+  }
   if (!agentProcess) return;
-  agentProcess.kill();
-  agentProcess = null;
+  const processToStop = agentProcess;
+  try {
+    processToStop.stdin?.write(JSON.stringify({ action: 'stop' }) + '\n');
+  } catch {}
+  setTimeout(() => {
+    if (agentProcess === processToStop) {
+      processToStop.kill();
+      agentProcess = null;
+    }
+  }, 1500);
   mainWindow?.webContents.send('agent-event', { type: 'status', data: { state: 'stopped' } });
+}
+
+function runAgentOnce(): Promise<{ ok: boolean; reason?: string }> {
+  if (agentProcess) {
+    return Promise.resolve({ ok: false, reason: '持续识别运行中' });
+  }
+  if (agentOnceProcess) {
+    return Promise.resolve({ ok: false, reason: '单次识别运行中' });
+  }
+
+  const agentPath = getAgentPath();
+  log(`agent once path: ${agentPath}`);
+
+  return new Promise((resolve) => {
+    try {
+      agentOnceProcess = spawn('python3', [agentPath, '--once'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      log(`agent once spawn succeeded, pid: ${agentOnceProcess.pid}`);
+    } catch (err) {
+      log(`agent once spawn error: ${err}`);
+      mainWindow?.webContents.send('agent-event', {
+        type: 'log',
+        data: { level: 'error', message: `单次识别启动失败: ${err}` },
+      });
+      resolve({ ok: false, reason: String(err) });
+      return;
+    }
+
+    bindAgentEventStream(agentOnceProcess, 'AGENT ONCE', (code) => {
+      agentOnceProcess = null;
+      resolve({ ok: code === 0, reason: code === 0 ? undefined : `退出码 ${code}` });
+    });
+  });
 }
 
 // --- IPC 处理 ---
@@ -237,6 +294,7 @@ ipcMain.on('agent-stop', () => stopAgent());
 ipcMain.on('agent-command', (_e, cmd: string) => {
   agentProcess?.stdin?.write(JSON.stringify({ action: cmd }) + '\n');
 });
+ipcMain.handle('agent-run-once', () => runAgentOnce());
 ipcMain.on('log-drawer-open', (_e, open: boolean) => {
   setLogDrawerOpen(open);
 });
@@ -434,7 +492,10 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   // Auto-start agent for testing
-  setTimeout(() => startAgent(), 2000);
+  autoStartTimer = setTimeout(() => {
+    autoStartTimer = null;
+    startAgent();
+  }, 2000);
 });
 
 app.on('window-all-closed', () => {

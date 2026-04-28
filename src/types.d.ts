@@ -3,6 +3,7 @@ interface ElectronAPI {
   removeAgentEventListener: () => void;
   startAgent: () => void;
   stopAgent: () => void;
+  runAgentOnce: () => Promise<{ ok: boolean; reason?: string }>;
   sendCommand: (cmd: string) => void;
   loadConfig: () => Promise<any>;
   saveConfig: (config: any) => Promise<boolean>;

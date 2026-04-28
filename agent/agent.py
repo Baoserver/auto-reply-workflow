@@ -5,6 +5,7 @@ import sys
 import time
 import threading
 import signal
+import argparse
 from pathlib import Path
 import pyautogui
 
@@ -62,6 +63,13 @@ class Agent:
         self.running = False
         self.detector.stop()
         emit("status", {"state": "stopped"})
+
+    def run_once(self):
+        self.running = True
+        try:
+            self.detector.check_once(self._on_new_message, self._on_assistant_workflow)
+        finally:
+            self.running = False
 
     def reload_config(self):
         was_running = self.running
@@ -220,7 +228,15 @@ class Agent:
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--once", action="store_true", help="执行单次识别后退出")
+    args = parser.parse_args()
+
     agent = Agent()
+
+    if args.once:
+        agent.run_once()
+        return
 
     def read_commands():
         for line in sys.stdin:

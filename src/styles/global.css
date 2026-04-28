@@ -828,6 +828,20 @@ select:focus-visible {
   filter: saturate(1.08);
 }
 
+.action-btn:disabled {
+  background: var(--surface-tertiary);
+  color: var(--text-dim);
+  cursor: not-allowed;
+  filter: grayscale(0.55);
+  opacity: 0.62;
+  box-shadow: 2px 2px 0 var(--border);
+}
+
+.action-btn:disabled:active {
+  transform: none;
+  box-shadow: 2px 2px 0 var(--border);
+}
+
 .action-btn:active {
   transform: translate(4px, 4px);
   box-shadow: 0 0 0 var(--border);

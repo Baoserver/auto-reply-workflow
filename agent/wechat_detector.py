@@ -84,6 +84,12 @@ class WeChatDetector:
         mode_label = "助手模式" if self.workflow_mode == "assistant" else "客服模式"
         emit_log("info", f"检测器已启动，模式={mode_label}，间隔 {self._check_interval}s，本地OCR={'开启' if self.local_ocr.enabled else '关闭'}，触发词: {self.trigger_keywords or '(无，全部放行)'}")
 
+    def check_once(self, callback, assistant_callback=None):
+        mode_label = "助手模式" if self.workflow_mode == "assistant" else "客服模式"
+        emit_log("info", f"单次识别开始，模式={mode_label}，本地OCR={'开启' if self.local_ocr.enabled else '关闭'}")
+        self._check_windows(callback, assistant_callback)
+        emit_log("info", "单次识别完成")
+
     def stop(self):
         self._running = False
         if self._thread:

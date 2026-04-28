@@ -64,6 +64,7 @@ export default function App() {
   const [running, setRunning] = useState(false);
   const [logDrawerOpen, setLogDrawerOpen] = useState(false);
   const [logDrawerFocused, setLogDrawerFocused] = useState(false);
+  const [recognizingOnce, setRecognizingOnce] = useState(false);
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [stats] = useState({ messages: 128, autoReplies: 126, escalations: 2 });
   const [connections, setConnections] = useState<Connection>({ wechat: false, wecom: false });
@@ -75,6 +76,27 @@ export default function App() {
       window.electronAPI?.startAgent();
     }
   }, [running]);
+
+  const handleRunOnce = useCallback(async () => {
+    if (running || recognizingOnce || !window.electronAPI?.runAgentOnce) return;
+    setRecognizingOnce(true);
+    try {
+      const result = await window.electronAPI.runAgentOnce();
+      if (!result?.ok && result?.reason) {
+        setEvents((prev) => [...prev.slice(-100), {
+          type: 'log',
+          data: { level: 'warn', message: `单次识别未执行: ${result.reason}` },
+        }]);
+      }
+    } catch (e) {
+      setEvents((prev) => [...prev.slice(-100), {
+        type: 'log',
+        data: { level: 'error', message: `单次识别异常: ${e}` },
+      }]);
+    } finally {
+      setRecognizingOnce(false);
+    }
+  }, [running, recognizingOnce]);
 
   const openLogDrawer = useCallback(() => {
     setLogDrawerOpen(true);
@@ -206,12 +228,18 @@ export default function App() {
                 </>
               )}
             </button>
-            <button className="action-btn secondary" onClick={openLogDrawer}>
+            <button
+              className="action-btn secondary"
+              onClick={handleRunOnce}
+              disabled={running || recognizingOnce}
+              title={running ? '持续识别运行中' : '执行一次识别'}
+            >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                <polyline points="14 2 14 8 20 8"/>
+                <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+                <path d="M21 3v6h-6"/>
+                <path d="M10 8l6 4-6 4V8z"/>
               </svg>
-              查看日志
+              {recognizingOnce ? '识别中' : '单次识别'}
             </button>
           </div>
 
