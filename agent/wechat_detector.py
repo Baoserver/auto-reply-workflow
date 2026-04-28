@@ -445,9 +445,22 @@ class WeChatDetector:
         separator_x = self._detect_vertical_separator(img)
         if separator_x is not None:
             left = min(width - 1, separator_x + 8)
-            box = (left, 0, width, height)
+            right = width
+            crop_mode = "auto_separator_left"
+            right_separator_x = self._detect_right_sidebar_separator(img, left)
+            if right_separator_x is not None:
+                candidate_right = max(left + 1, right_separator_x - 6)
+                candidate_box = (left, 0, candidate_right, height)
+                if self._is_valid_auto_box(candidate_box, width, height):
+                    right = candidate_right
+                    crop_mode = "auto_separator_both"
+
+            box = (left, 0, right, height)
             if self._is_valid_auto_box(box, width, height) and self._has_right_side_text(candidates, left / width):
-                return box, "auto_separator"
+                if crop_mode == "auto_separator_both" and not self._has_text_beyond_boundary(candidates, right / width):
+                    crop_mode = "auto_separator_left"
+                    box = (left, 0, width, height)
+                return box, crop_mode
 
         if len(candidates) < 8:
             return None, "auto_ocr_gap"
@@ -461,6 +474,46 @@ class WeChatDetector:
         if not self._is_valid_auto_box(box, width, height):
             return None, "auto_ocr_gap"
         return box, "auto_ocr_gap"
+
+    def _detect_right_sidebar_separator(self, img: Image.Image, left_boundary: int) -> int | None:
+        rgb = img.convert("RGB")
+        width, height = rgb.size
+        chat_width = width - left_boundary
+        if chat_width < 420:
+            return None
+
+        x_start = max(int(width * 0.65), left_boundary + int(chat_width * 0.52))
+        x_end = min(int(width * 0.88), left_boundary + int(chat_width * 0.82), width - 12)
+        y_start = int(height * 0.08)
+        y_end = int(height * 0.92)
+        if x_end <= x_start or y_end <= y_start:
+            return None
+
+        candidates = []
+        for x in range(x_start, x_end):
+            score, coverage = self._vertical_separator_score(rgb, x, y_start, y_end)
+            if coverage < 0.70:
+                continue
+            if score < 24:
+                continue
+            candidates.append((score * coverage, score, coverage, x))
+
+        if not candidates:
+            return None
+
+        high_confidence = [
+            (x, score)
+            for _, score, coverage, x in candidates
+            if coverage >= 0.82 and score >= 28
+        ]
+        if high_confidence:
+            return self._pick_separator_from_high_confidence(high_confidence)
+
+        candidates.sort(reverse=True)
+        for _, score, coverage, x in candidates[:8]:
+            if coverage >= 0.75 and score >= 26 and self._is_stable_separator(rgb, x, y_start, y_end):
+                return x
+        return None
 
     def _detect_vertical_separator(self, img: Image.Image) -> int | None:
         rgb = img.convert("RGB")
@@ -545,6 +598,10 @@ class WeChatDetector:
 
     @staticmethod
     def _has_right_side_text(lines, boundary: float) -> bool:
+        return sum(1 for line in lines if line.x >= boundary and 0.06 <= line.y <= 0.92) >= 4
+
+    @staticmethod
+    def _has_text_beyond_boundary(lines, boundary: float) -> bool:
         return sum(1 for line in lines if line.x >= boundary and 0.06 <= line.y <= 0.92) >= 4
 
     def _infer_chat_left_boundary(self, lines) -> float | None:
