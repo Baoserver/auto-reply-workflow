@@ -36,13 +36,14 @@ class AIEngine:
             texts.append(f"## {f.stem}\n{f.read_text(encoding='utf-8')}")
         self.knowledge_context = "\n\n".join(texts)
 
-    def generate_reply(self, message: str, channel: str = "微信", sender: str = "未知", context: str = "") -> str | None:
+    def generate_reply(self, message: str, channel: str = "微信", sender: str = "未知", context: str = "", allow_openclaw: bool = True) -> str | None:
         """
         生成回复。返回 None 表示需要升级到人工。
         """
-        openclaw_reply = self.openclaw.generate_reply(message, channel=channel, sender=sender, context=context)
-        if openclaw_reply:
-            return openclaw_reply
+        if allow_openclaw:
+            openclaw_reply = self.openclaw.generate_reply(message, channel=channel, sender=sender, context=context)
+            if openclaw_reply:
+                return openclaw_reply
 
         knowledge_section = ""
         if self.knowledge_context:

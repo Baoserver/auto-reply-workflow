@@ -41,8 +41,29 @@ def emit(event_type: str, data: dict):
 class WindowState:
     hash: str = ""
     ocr_text: str = ""
+    ocr_lines: list = None
     screenshot_path: str = ""
     ocr_fail_count: int = 0
+
+
+@dataclass
+class ClassifiedOCRLine:
+    text: str
+    x: float
+    y: float
+    width: float
+    height: float
+    role: str
+
+    def to_dict(self) -> dict:
+        return {
+            "text": self.text,
+            "x": self.x,
+            "y": self.y,
+            "width": self.width,
+            "height": self.height,
+            "role": self.role,
+        }
 
 
 class WeChatDetector:
@@ -77,17 +98,17 @@ class WeChatDetector:
         self.chat_region = tuple(region_cfg) if region_cfg else None
         self._first_check_logged = set()
 
-    def start(self, callback, assistant_callback=None):
+    def start(self, callback, assistant_callback=None, escalation_callback=None):
         self._running = True
-        self._thread = threading.Thread(target=self._monitor_loop, args=(callback, assistant_callback), daemon=True)
+        self._thread = threading.Thread(target=self._monitor_loop, args=(callback, assistant_callback, escalation_callback), daemon=True)
         self._thread.start()
         mode_label = "助手模式" if self.workflow_mode == "assistant" else "客服模式"
         emit_log("info", f"检测器已启动，模式={mode_label}，间隔 {self._check_interval}s，本地OCR={'开启' if self.local_ocr.enabled else '关闭'}，触发词: {self.trigger_keywords or '(无，全部放行)'}")
 
-    def check_once(self, callback, assistant_callback=None):
+    def check_once(self, callback, assistant_callback=None, escalation_callback=None):
         mode_label = "助手模式" if self.workflow_mode == "assistant" else "客服模式"
         emit_log("info", f"单次识别开始，模式={mode_label}，本地OCR={'开启' if self.local_ocr.enabled else '关闭'}")
-        self._check_windows(callback, assistant_callback)
+        self._check_windows(callback, assistant_callback, escalation_callback)
         emit_log("info", "单次识别完成")
 
     def stop(self):
@@ -95,15 +116,15 @@ class WeChatDetector:
         if self._thread:
             self._thread.join(timeout=5)
 
-    def _monitor_loop(self, callback, assistant_callback=None):
+    def _monitor_loop(self, callback, assistant_callback=None, escalation_callback=None):
         while self._running:
             try:
-                self._check_windows(callback, assistant_callback)
+                self._check_windows(callback, assistant_callback, escalation_callback)
             except Exception as e:
                 emit_log("error", f"检测循环异常: {e}")
             time.sleep(self._check_interval)
 
-    def _check_windows(self, callback, assistant_callback=None):
+    def _check_windows(self, callback, assistant_callback=None, escalation_callback=None):
         windows = []
         if self.config.get("wecom", {}).get("enabled", True):
             windows.append("企业微信")
@@ -150,6 +171,8 @@ class WeChatDetector:
             # 阶段一：本地 OCR
             ocr_text = ""
             new_lines = []
+            filtered_ocr_lines = []
+            new_ocr_lines = []
             ocr_success = False
             vision_image_path = screenshot_path
 
@@ -163,11 +186,20 @@ class WeChatDetector:
                             f"[{window_name}] OCR裁剪图: {os.path.basename(ocr_image)} "
                             f"({img.size[0]}x{img.size[1]}), mode={crop_mode}, box={crop_box}",
                         )
-                    ocr_text = self._extract_ocr_text_without_watermark(ocr_image, window_name)
+                    filtered_ocr_lines, _ = self._extract_ocr_lines_without_watermark(ocr_image, window_name)
+                    ocr_text = "\n".join(line.text for line in filtered_ocr_lines)
                     if ocr_text:
-                        new_lines = self._diff_new_lines(state.ocr_text, ocr_text)
+                        new_ocr_lines = self._diff_new_ocr_lines(state.ocr_lines or [], filtered_ocr_lines)
+                        new_lines = [line.text for line in new_ocr_lines]
                         emit_log("info", f"[{window_name}] OCR提取 {len(ocr_text)} 字符，新增 {len(new_lines)} 行")
-                        emit("ocr", {"window": window_name, "new_lines": new_lines, "full_text": ocr_text})
+                        last_classified = self._last_meaningful_ocr_line(new_ocr_lines)
+                        emit("ocr", {
+                            "window": window_name,
+                            "new_lines": new_lines,
+                            "full_text": ocr_text,
+                            "last_role": last_classified.role if last_classified else "",
+                            "last_line": last_classified.to_dict() if last_classified else None,
+                        })
                         ocr_success = True
                     else:
                         emit_log("warn", f"[{window_name}] 本地OCR返回空结果，将直接使用视觉API")
@@ -175,6 +207,7 @@ class WeChatDetector:
                     emit_log("error", f"本地OCR异常: {e}")
 
             state.ocr_text = ocr_text
+            state.ocr_lines = filtered_ocr_lines
             state.screenshot_path = screenshot_path
 
             if self.workflow_mode == "assistant" and not ocr_success:
@@ -195,13 +228,18 @@ class WeChatDetector:
                     self._maybe_cleanup_screenshot(screenshot_path)
                     continue
 
-                last_message = self._last_meaningful_line(new_lines)
-                if not last_message:
+                last_line = self._last_meaningful_ocr_line(new_ocr_lines)
+                if not last_line:
                     emit_log("info", f"[{window_name}] 未找到最后有效消息，跳过")
                     self._maybe_cleanup_screenshot(screenshot_path)
                     continue
 
-                emit_log("info", f"[{window_name}] OCR最后有效消息: {last_message}")
+                last_message = last_line.text
+                emit_log(
+                    "info",
+                    f"[{window_name}] OCR最后有效消息: {last_message} "
+                    f"(role={last_line.role}, x={last_line.x:.3f}, y={last_line.y:.3f})",
+                )
                 msg_hash = hashlib.md5(last_message.encode("utf-8")).hexdigest()
                 if msg_hash in self._processed_hashes:
                     emit_log("info", f"[{window_name}] 重复消息，跳过")
@@ -209,6 +247,10 @@ class WeChatDetector:
                     continue
 
                 if self.workflow_mode == "assistant":
+                    if last_line.role != "self":
+                        emit_log("info", f"[{window_name}] 助手模式只处理我方最后消息，当前 role={last_line.role}，跳过: {last_message}")
+                        self._maybe_cleanup_screenshot(screenshot_path)
+                        continue
                     self._handle_assistant_workflow(
                         window_name=window_name,
                         screenshot_path=screenshot_path,
@@ -219,9 +261,28 @@ class WeChatDetector:
                     )
                     continue
 
-                # 触发词检查
+                if last_line.role != "customer":
+                    emit_log("info", f"[{window_name}] 客服模式只处理客户最后消息，当前 role={last_line.role}，跳过: {last_message}")
+                    self._maybe_cleanup_screenshot(screenshot_path)
+                    continue
+
+                escalation_keyword = self._match_escalation_keyword(last_message)
+                if escalation_keyword:
+                    if escalation_callback:
+                        self._processed_hashes.append(msg_hash)
+                        if len(self._processed_hashes) > self._max_dedup:
+                            self._processed_hashes = self._processed_hashes[-self._max_dedup:]
+                        emit_log("info", f"[{window_name}] OCR客户消息命中升级关键词，直接转人工: {escalation_keyword}")
+                        escalation_callback(window_name, "OCR客户", last_message, f"关键词触发: {escalation_keyword}")
+                        self._maybe_cleanup_screenshot(screenshot_path, keep=True)
+                    else:
+                        emit_log("warn", f"[{window_name}] 缺少转人工回调，跳过升级关键词: {escalation_keyword}")
+                        self._maybe_cleanup_screenshot(screenshot_path)
+                    continue
+
+                # 触发词检查。升级关键词已前置处理，这里只决定是否进入 Vision。
                 if self.trigger_keywords and not self._match_trigger(last_message):
-                    emit_log("info", f"[{window_name}] 最后有效消息未命中触发词，跳过视觉API: {last_message}")
+                    emit_log("info", f"[{window_name}] 客户最后有效消息未命中触发词，跳过视觉API: {last_message}")
                     self._maybe_cleanup_screenshot(screenshot_path)
                     continue
 
@@ -235,8 +296,6 @@ class WeChatDetector:
             emit_log("info", f"[{window_name}] 调用视觉API精准分析: {os.path.basename(vision_image_path)}")
             try:
                 result = self.vision.analyze_chat_screenshot(image_path=vision_image_path, mode="customer")
-                emit("vision", {"window": window_name, "result": result})
-                emit_log("info", f"[{window_name}] Vision识别结果: {json.dumps(self._summarize_vision_result(result), ensure_ascii=False)}")
 
                 if result.get("has_new_message"):
                     msg = result.get("latest_message", {})
@@ -244,14 +303,29 @@ class WeChatDetector:
                     content = msg.get("content", "")
 
                     if content:
+                        route = self.openclaw.match_route(content)
+                        if route:
+                            result["customer_openclaw_route"] = {
+                                "agent_id": route.agent_id,
+                                "agent_name": route.agent_name,
+                                "matched_keyword": route.matched_keyword,
+                                "extra_prompt": route.extra_prompt,
+                            }
+                            emit_log("info", f"[{window_name}] 客服模式命中 OpenClaw 路由: agent={route.agent_id}, keyword={route.matched_keyword}")
+                        emit("vision", {"window": window_name, "result": result})
+                        emit_log("info", f"[{window_name}] Vision识别结果: {json.dumps(self._summarize_vision_result(result), ensure_ascii=False)}")
                         self._processed_hashes.append(dedup_key)
                         if len(self._processed_hashes) > self._max_dedup:
                             self._processed_hashes = self._processed_hashes[-self._max_dedup:]
                         callback(window_name, sender, content, screenshot_path, result)
                         self._maybe_cleanup_screenshot(screenshot_path, keep=True)
                     else:
+                        emit("vision", {"window": window_name, "result": result})
+                        emit_log("info", f"[{window_name}] Vision识别结果: {json.dumps(self._summarize_vision_result(result), ensure_ascii=False)}")
                         self._maybe_cleanup_screenshot(screenshot_path)
                 else:
+                    emit("vision", {"window": window_name, "result": result})
+                    emit_log("info", f"[{window_name}] Vision识别结果: {json.dumps(self._summarize_vision_result(result), ensure_ascii=False)}")
                     emit_log("info", f"[{window_name}] 视觉API未识别到新消息")
                     self._maybe_cleanup_screenshot(screenshot_path)
             except Exception as e:
@@ -317,6 +391,35 @@ class WeChatDetector:
                 result.append(stripped)
         return result
 
+    def _diff_new_ocr_lines(self, old_lines: list, new_lines: list) -> list[ClassifiedOCRLine]:
+        if not old_lines:
+            return [self._classify_ocr_line(line) for line in new_lines if line.text.strip()]
+
+        old_texts = set(line.text.strip() for line in old_lines if line and line.text.strip())
+        result = []
+        for line in new_lines:
+            text = line.text.strip()
+            if text and text not in old_texts:
+                result.append(self._classify_ocr_line(line))
+        return result
+
+    def _classify_ocr_line(self, line) -> ClassifiedOCRLine:
+        text = line.text.strip()
+        center_x = float(line.x) + float(line.width) / 2
+        role = "unknown"
+        if center_x <= 0.50:
+            role = "customer"
+        elif center_x >= 0.56:
+            role = "self"
+        return ClassifiedOCRLine(
+            text=text,
+            x=float(line.x),
+            y=float(line.y),
+            width=float(line.width),
+            height=float(line.height),
+            role=role,
+        )
+
     def _is_system_message(self, text: str) -> bool:
         for pattern in SYSTEM_PATTERNS:
             if pattern in text:
@@ -337,6 +440,18 @@ class WeChatDetector:
             return stripped
         return ""
 
+    def _last_meaningful_ocr_line(self, lines: list[ClassifiedOCRLine]) -> ClassifiedOCRLine | None:
+        for line in reversed(lines):
+            text = line.text.strip()
+            if not text:
+                continue
+            if self._is_system_message(text):
+                continue
+            if self._is_time_like_line(text):
+                continue
+            return line
+        return None
+
     def _is_time_like_line(self, text: str) -> bool:
         stripped = text.strip().strip("|")
         if re.fullmatch(r"\d{1,2}:\d{2}", stripped):
@@ -354,6 +469,14 @@ class WeChatDetector:
                 return True
         return False
 
+    def _match_escalation_keyword(self, text: str) -> str:
+        keywords = self.config.get("escalation", {}).get("keywords", "")
+        for kw in str(keywords).replace("，", ",").split(","):
+            kw = kw.strip()
+            if kw and kw in text:
+                return kw
+        return ""
+
     def _summarize_vision_result(self, result: dict) -> dict:
         if not isinstance(result, dict):
             return {}
@@ -369,6 +492,7 @@ class WeChatDetector:
             "workflow_mode": result.get("workflow_mode", self.workflow_mode),
             "matched_keyword": result.get("matched_keyword", ""),
             "route_agent": result.get("route_agent", {}),
+            "customer_openclaw_route": result.get("customer_openclaw_route", {}),
         }
 
     def _assistant_vision_has_content(self, result: dict) -> bool:
@@ -655,9 +779,13 @@ class WeChatDetector:
         return True
 
     def _extract_ocr_text_without_watermark(self, image_path: str, window_name: str) -> str:
+        lines, _ = self._extract_ocr_lines_without_watermark(image_path, window_name)
+        return "\n".join(line.text for line in lines)
+
+    def _extract_ocr_lines_without_watermark(self, image_path: str, window_name: str) -> tuple[list, list[str]]:
         lines = self.local_ocr.extract_text(image_path)
         if not lines:
-            return ""
+            return [], []
 
         with Image.open(image_path) as img:
             rgb = img.convert("RGB")
@@ -672,11 +800,11 @@ class WeChatDetector:
                 if self._is_low_contrast_watermark_line(rgb, line):
                     removed.append(text)
                     continue
-                kept.append(text)
+                kept.append(line)
 
         if removed:
             emit_log("info", f"[{window_name}] OCR过滤水印 {len(removed)} 行: {removed[:5]}")
-        return "\n".join(kept)
+        return kept, removed
 
     @staticmethod
     def _is_low_contrast_watermark_line(img: Image.Image, line) -> bool:

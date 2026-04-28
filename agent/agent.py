@@ -15,6 +15,7 @@ from screen_capture import ScreenCapture
 from vision import VisionAnalyzer
 from ai_engine import AIEngine
 from openclaw_client import OpenClawClient
+from openclaw_client import OpenClawRoute
 from wechat_operator import WeChatOperator
 from wechat_detector import WeChatDetector
 from escalation import EscalationChecker
@@ -58,7 +59,7 @@ class Agent:
             return
         self.running = True
         emit("status", {"state": "running"})
-        self.detector.start(self._on_new_message, self._on_assistant_workflow)
+        self.detector.start(self._on_new_message, self._on_assistant_workflow, self._on_customer_escalation)
 
     def stop(self):
         print("[Agent] stop() called", flush=True)
@@ -69,7 +70,7 @@ class Agent:
     def run_once(self):
         self.running = True
         try:
-            self.detector.check_once(self._on_new_message, self._on_assistant_workflow)
+            self.detector.check_once(self._on_new_message, self._on_assistant_workflow, self._on_customer_escalation)
         finally:
             self.running = False
 
@@ -82,7 +83,7 @@ class Agent:
         self._build_runtime()
 
         if was_running:
-            self.detector.start(self._on_new_message, self._on_assistant_workflow)
+            self.detector.start(self._on_new_message, self._on_assistant_workflow, self._on_customer_escalation)
             emit("status", {"state": "running"})
 
         interval = self.config.get("ocr", {}).get("check_interval", 3)
@@ -114,7 +115,7 @@ class Agent:
 
         try:
             context = self._format_conversation_context(vision_result)
-            reply = self.ai.generate_reply(content, channel=channel, sender=sender, context=context)
+            reply = self._generate_customer_reply(content, channel=channel, sender=sender, context=context, vision_result=vision_result)
         except Exception as e:
             print(f"[Agent] AI error: {e}", flush=True)
             reply = None
@@ -134,6 +135,36 @@ class Agent:
             except Exception as e:
                 print(f"[Agent] send error: {e}", flush=True)
 
+    def _generate_customer_reply(self, content: str, channel: str, sender: str, context: str, vision_result: dict | None) -> str | None:
+        route_data = (vision_result or {}).get("customer_openclaw_route")
+        if isinstance(route_data, dict):
+            route = OpenClawRoute(
+                agent_id=str(route_data.get("agent_id") or "").strip(),
+                agent_name=str(route_data.get("agent_name") or route_data.get("agent_id") or "").strip(),
+                matched_keyword=str(route_data.get("matched_keyword") or "").strip(),
+                extra_prompt=str(route_data.get("extra_prompt") or "").strip(),
+            )
+            if route.agent_id:
+                try:
+                    openclaw_result = self.ai.openclaw.run_agent_detail(
+                        route=route,
+                        message=content,
+                        channel=channel,
+                        sender=sender,
+                        context=context,
+                    )
+                    reply = openclaw_result.get("reply") if openclaw_result else None
+                    if reply:
+                        return reply
+                except Exception as e:
+                    print(f"[Agent] customer OpenClaw error: {e}", flush=True)
+                emit("log", {
+                    "level": "warn",
+                    "message": f"客服模式 OpenClaw 未返回可发送内容，agent={route.agent_id}，回退 MiniMax",
+                })
+
+        return self.ai.generate_reply(content, channel=channel, sender=sender, context=context, allow_openclaw=False)
+
     def _escalate(self, channel: str, sender: str, content: str):
         reason = self.escalation.get_reason(content)
         notified = False
@@ -144,6 +175,14 @@ class Agent:
         emit("escalation", {"reason": reason, "feishu_notified": notified})
         self.operator.type_and_send("好的，我帮您转接人工客服，请稍候~", window_name=channel)
         self.conversation_rounds.pop(sender, None)
+
+    def _on_customer_escalation(self, channel: str, sender: str, content: str, reason: str) -> bool:
+        if not self.running:
+            return False
+        self.escalation.set_reason(reason)
+        emit("message", {"channel": channel, "sender": sender, "content": content})
+        self._escalate(channel, sender, content)
+        return True
 
     def _on_assistant_workflow(self, channel: str, route, trigger_text: str, screenshot_path: str = "", vision_result: dict = None) -> bool:
         if not self.running:

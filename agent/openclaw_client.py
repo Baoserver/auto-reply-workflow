@@ -132,7 +132,7 @@ class OpenClawClient:
             route=route,
             context=context,
         )
-        emit_log("info", f"OpenClaw assistant route matched: agent={route.agent_id}, keyword={route.matched_keyword}")
+        emit_log("info", f"OpenClaw route matched: agent={route.agent_id}, keyword={route.matched_keyword}")
         return self._call_agent(route=route, prompt=prompt)
 
     def _call_agent(self, route: OpenClawRoute, prompt: str) -> dict | None:
