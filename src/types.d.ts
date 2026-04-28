@@ -1,5 +1,6 @@
 interface ElectronAPI {
   onAgentEvent: (callback: (event: any) => void) => void;
+  onPaneLayoutChanged: (callback: (layout: { mainWidth?: number; drawerWidth?: number; drawerOpen?: boolean }) => void) => () => void;
   removeAgentEventListener: () => void;
   startAgent: () => void;
   stopAgent: () => void;
@@ -13,6 +14,7 @@ interface ElectronAPI {
   checkProcess: (name: string) => Promise<boolean>;
   listOpenClawAgents: (cliPath?: string) => Promise<{ id: string; name: string }[]>;
   setLogDrawerOpen: (open: boolean) => void;
+  setPaneLayout: (layout: { mainWidth?: number; drawerWidth?: number; drawerOpen?: boolean }) => void;
 }
 
 interface Window {

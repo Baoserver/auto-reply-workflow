@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles/global.css';
 import Dashboard from './components/Dashboard';
@@ -16,6 +16,15 @@ interface Connection {
   wechat: boolean;
   wecom: boolean;
 }
+
+const DEFAULT_MAIN_WIDTH = 430;
+const DEFAULT_LOG_WIDTH = 390;
+const MIN_MAIN_WIDTH = 375;
+const MAX_MAIN_WIDTH = 760;
+const MIN_LOG_WIDTH = 320;
+const MAX_LOG_WIDTH = 720;
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
 const TabIcon = ({ name, active }: { name: string; active: boolean }) => {
   const color = active ? '#171717' : '#7B715F';
@@ -65,9 +74,19 @@ export default function App() {
   const [logDrawerOpen, setLogDrawerOpen] = useState(false);
   const [logDrawerFocused, setLogDrawerFocused] = useState(false);
   const [recognizingOnce, setRecognizingOnce] = useState(false);
+  const [mainWidth, setMainWidth] = useState(DEFAULT_MAIN_WIDTH);
+  const [logWidth, setLogWidth] = useState(DEFAULT_LOG_WIDTH);
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [stats] = useState({ messages: 128, autoReplies: 126, escalations: 2 });
   const [connections, setConnections] = useState<Connection>({ wechat: false, wecom: false });
+  const paneSyncRef = useRef(false);
+  const paneSyncTimerRef = useRef<number | null>(null);
+  const resizeRef = useRef<null | {
+    pane: 'main' | 'log';
+    startX: number;
+    startMainWidth: number;
+    startLogWidth: number;
+  }>(null);
 
   const handleStartStop = useCallback(() => {
     if (running) {
@@ -109,6 +128,18 @@ export default function App() {
     setLogDrawerFocused(Boolean(target.closest('.log-drawer')));
   }, [logDrawerOpen]);
 
+  const startPaneResize = useCallback((pane: 'main' | 'log', event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resizeRef.current = {
+      pane,
+      startX: event.clientX,
+      startMainWidth: mainWidth,
+      startLogWidth: logWidth,
+    };
+    document.body.classList.add('pane-resizing');
+  }, [mainWidth, logWidth]);
+
   useEffect(() => {
     if (!window.electronAPI) return;
 
@@ -146,14 +177,73 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    window.electronAPI?.setLogDrawerOpen?.(logDrawerOpen);
+    const handleMove = (event: MouseEvent) => {
+      const current = resizeRef.current;
+      if (!current) return;
+      const delta = event.clientX - current.startX;
+      if (current.pane === 'main') {
+        setMainWidth(clamp(current.startMainWidth + delta, MIN_MAIN_WIDTH, MAX_MAIN_WIDTH));
+      } else {
+        const totalWidth = current.startMainWidth + current.startLogWidth;
+        const minLogWidth = Math.max(MIN_LOG_WIDTH, totalWidth - MAX_MAIN_WIDTH);
+        const maxLogWidth = Math.min(MAX_LOG_WIDTH, totalWidth - MIN_MAIN_WIDTH);
+        const nextLogWidth = clamp(current.startLogWidth - delta, minLogWidth, maxLogWidth);
+        setLogWidth(nextLogWidth);
+        setMainWidth(totalWidth - nextLogWidth);
+      }
+    };
+    const handleUp = () => {
+      if (!resizeRef.current) return;
+      resizeRef.current = null;
+      document.body.classList.remove('pane-resizing');
+    };
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+      document.body.classList.remove('pane-resizing');
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!window.electronAPI?.onPaneLayoutChanged) return;
+    return window.electronAPI.onPaneLayoutChanged((layout) => {
+      paneSyncRef.current = true;
+      if (paneSyncTimerRef.current !== null) {
+        window.clearTimeout(paneSyncTimerRef.current);
+      }
+      if (typeof layout.mainWidth === 'number') {
+        setMainWidth(clamp(layout.mainWidth, MIN_MAIN_WIDTH, MAX_MAIN_WIDTH));
+      }
+      if (typeof layout.drawerWidth === 'number') {
+        setLogWidth(clamp(layout.drawerWidth, MIN_LOG_WIDTH, MAX_LOG_WIDTH));
+      }
+      if (typeof layout.drawerOpen === 'boolean') {
+        setLogDrawerOpen(layout.drawerOpen);
+      }
+      paneSyncTimerRef.current = window.setTimeout(() => {
+        paneSyncRef.current = false;
+        paneSyncTimerRef.current = null;
+      }, 350);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (paneSyncRef.current) return;
+    window.electronAPI?.setPaneLayout?.({
+      mainWidth,
+      drawerWidth: logWidth,
+      drawerOpen: logDrawerOpen,
+    });
     if (logDrawerOpen) {
       setLogDrawerFocused(true);
     }
-    return () => {
-      window.electronAPI?.setLogDrawerOpen?.(false);
-    };
-  }, [logDrawerOpen]);
+  }, [mainWidth, logWidth, logDrawerOpen]);
+
+  useEffect(() => () => {
+    window.electronAPI?.setLogDrawerOpen?.(false);
+  }, []);
 
   const tabs = [
     { key: 'home', label: '首页', icon: 'home' },
@@ -180,6 +270,10 @@ export default function App() {
   return (
     <div
       className={`app ${logDrawerOpen ? 'log-drawer-open' : ''} ${logDrawerOpen && logDrawerFocused ? 'log-drawer-focused' : 'log-drawer-main-focused'}`}
+      style={{
+        '--app-width': `${mainWidth}px`,
+        '--log-drawer-width': `${logWidth}px`,
+      } as React.CSSProperties}
       onMouseDownCapture={handleAppPointerDown}
     >
       <header className="app-header">
@@ -209,6 +303,11 @@ export default function App() {
 
       {tab !== 'settings' && (
         <>
+          <div
+            className="pane-resize-handle main-pane-resize-handle"
+            title="调整主页宽度"
+            onMouseDown={(event) => startPaneResize('main', event)}
+          />
           <div className="action-bar">
             <button className={`action-btn ${running ? 'stop' : 'start'}`} onClick={handleStartStop}>
               {running ? (
@@ -267,6 +366,11 @@ export default function App() {
           {logDrawerOpen && (
             <div className="log-drawer-layer">
               <aside className="log-drawer">
+                <div
+                  className="pane-resize-handle log-pane-resize-handle"
+                  title="拖动分隔线调整日志宽度"
+                  onMouseDown={(event) => startPaneResize('log', event)}
+                />
                 <div className="log-drawer-header">
                   <span>实时日志</span>
                   <button className="log-drawer-close" aria-label="关闭日志" onClick={() => setLogDrawerOpen(false)}>

@@ -1,8 +1,13 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   onAgentEvent: (callback: (event: any) => void) => {
     ipcRenderer.on('agent-event', (_e, data) => callback(data));
+  },
+  onPaneLayoutChanged: (callback: (layout: { mainWidth?: number; drawerWidth?: number; drawerOpen?: boolean }) => void) => {
+    const listener = (_e: IpcRendererEvent, layout: { mainWidth?: number; drawerWidth?: number; drawerOpen?: boolean }) => callback(layout);
+    ipcRenderer.on('pane-layout-changed', listener);
+    return () => ipcRenderer.removeListener('pane-layout-changed', listener);
   },
   removeAgentEventListener: () => {
     ipcRenderer.removeAllListeners('agent-event');
@@ -21,4 +26,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkProcess: (name: string) => ipcRenderer.invoke('check-process', name),
   listOpenClawAgents: (cliPath?: string) => ipcRenderer.invoke('list-openclaw-agents', cliPath),
   setLogDrawerOpen: (open: boolean) => ipcRenderer.send('log-drawer-open', open),
+  setPaneLayout: (layout: { mainWidth?: number; drawerWidth?: number; drawerOpen?: boolean }) =>
+    ipcRenderer.send('pane-layout', layout),
 });

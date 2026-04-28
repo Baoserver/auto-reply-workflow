@@ -11,9 +11,20 @@ let agentOnceProcess: ChildProcess | null = null;
 let autoStartTimer: NodeJS.Timeout | null = null;
 
 let LOG_FILE: string;
-const APP_WIDTH = 430;
+const DEFAULT_APP_WIDTH = 430;
 const APP_HEIGHT = 900;
-const LOG_DRAWER_WIDTH = 390;
+const DEFAULT_LOG_DRAWER_WIDTH = 390;
+const MIN_APP_WIDTH = 375;
+const MAX_APP_WIDTH = 760;
+const MIN_LOG_DRAWER_WIDTH = 320;
+const MAX_LOG_DRAWER_WIDTH = 720;
+const MIN_APP_HEIGHT = 800;
+let appWidth = DEFAULT_APP_WIDTH;
+let logDrawerWidth = DEFAULT_LOG_DRAWER_WIDTH;
+let logDrawerOpen = false;
+let applyingPaneLayout = false;
+let lastWindowBounds: { x: number; y: number; width: number; height: number } | null = null;
+let nativeResizeSyncUntil = 0;
 
 function log(msg: string) {
   if (!LOG_FILE) {
@@ -63,12 +74,12 @@ function createWindow() {
   const { workArea } = screen.getPrimaryDisplay();
 
   mainWindow = new BrowserWindow({
-    width: APP_WIDTH,
+    width: appWidth,
     height: APP_HEIGHT,
-    x: workArea.x + workArea.width - APP_WIDTH,
+    x: workArea.x + workArea.width - appWidth,
     y: workArea.y,
-    minWidth: 375,
-    minHeight: 800,
+    minWidth: MIN_APP_WIDTH,
+    minHeight: MIN_APP_HEIGHT,
     show: false,
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#F5F5F7',
@@ -82,23 +93,102 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, '../index.html'));
   mainWindow.once('ready-to-show', () => mainWindow?.show());
 
+  updateWindowSizeLimits();
+  lastWindowBounds = mainWindow.getBounds();
+  mainWindow.on('resize', handleWindowResize);
+
   mainWindow.on('closed', () => {
     stopAgent();
     mainWindow = null;
+    lastWindowBounds = null;
   });
 }
 
-function setLogDrawerOpen(open: boolean) {
+function updateWindowSizeLimits() {
   if (!mainWindow) return;
+  const minWidth = MIN_APP_WIDTH + (logDrawerOpen ? MIN_LOG_DRAWER_WIDTH : 0);
+  const maxWidth = MAX_APP_WIDTH + (logDrawerOpen ? MAX_LOG_DRAWER_WIDTH : 0);
+  mainWindow.setMinimumSize(minWidth, MIN_APP_HEIGHT);
+  mainWindow.setMaximumSize(maxWidth, 10000);
+}
+
+function resizeMainWindow() {
+  if (!mainWindow) return;
+  updateWindowSizeLimits();
   const { workArea } = screen.getDisplayMatching(mainWindow.getBounds());
-  const targetWidth = open ? APP_WIDTH + LOG_DRAWER_WIDTH : APP_WIDTH;
-  const targetHeight = Math.max(mainWindow.getBounds().height, 800);
+  const targetWidth = appWidth + (logDrawerOpen ? logDrawerWidth : 0);
+  const targetHeight = Math.max(mainWindow.getBounds().height, MIN_APP_HEIGHT);
+  applyingPaneLayout = true;
   mainWindow.setBounds({
     x: workArea.x + workArea.width - targetWidth,
     y: workArea.y,
     width: targetWidth,
     height: targetHeight,
   }, true);
+  lastWindowBounds = mainWindow.getBounds();
+  setTimeout(() => {
+    applyingPaneLayout = false;
+  }, 80);
+}
+
+function emitPaneLayoutChanged() {
+  mainWindow?.webContents.send('pane-layout-changed', {
+    mainWidth: appWidth,
+    drawerWidth: logDrawerWidth,
+    drawerOpen: logDrawerOpen,
+  });
+}
+
+function handleWindowResize() {
+  if (!mainWindow || applyingPaneLayout) return;
+  const bounds = mainWindow.getBounds();
+  const previous = lastWindowBounds || bounds;
+  lastWindowBounds = bounds;
+  nativeResizeSyncUntil = Date.now() + 350;
+
+  if (!logDrawerOpen) {
+    appWidth = Math.min(Math.max(Math.round(bounds.width), MIN_APP_WIDTH), MAX_APP_WIDTH);
+    emitPaneLayoutChanged();
+    return;
+  }
+
+  const previousRight = previous.x + previous.width;
+  const currentRight = bounds.x + bounds.width;
+  const leftDelta = bounds.x - previous.x;
+  const rightDelta = currentRight - previousRight;
+
+  if (Math.abs(leftDelta) > 2 && Math.abs(leftDelta) >= Math.abs(rightDelta)) {
+    appWidth = Math.min(Math.max(Math.round(bounds.width - logDrawerWidth), MIN_APP_WIDTH), MAX_APP_WIDTH);
+  } else {
+    logDrawerWidth = Math.min(Math.max(Math.round(bounds.width - appWidth), MIN_LOG_DRAWER_WIDTH), MAX_LOG_DRAWER_WIDTH);
+  }
+
+  emitPaneLayoutChanged();
+}
+
+function setLogDrawerOpen(open: boolean) {
+  logDrawerOpen = open;
+  updateWindowSizeLimits();
+  resizeMainWindow();
+}
+
+function setPaneLayout(layout: { mainWidth?: number; drawerWidth?: number; drawerOpen?: boolean }) {
+  const drawerOpenChanged = typeof layout.drawerOpen === 'boolean' && layout.drawerOpen !== logDrawerOpen;
+  if (typeof layout.mainWidth === 'number') {
+    appWidth = Math.min(Math.max(Math.round(layout.mainWidth), MIN_APP_WIDTH), MAX_APP_WIDTH);
+  }
+  if (typeof layout.drawerWidth === 'number') {
+    logDrawerWidth = Math.min(Math.max(Math.round(layout.drawerWidth), MIN_LOG_DRAWER_WIDTH), MAX_LOG_DRAWER_WIDTH);
+  }
+  if (typeof layout.drawerOpen === 'boolean') {
+    logDrawerOpen = layout.drawerOpen;
+  }
+  updateWindowSizeLimits();
+  if (!drawerOpenChanged && Date.now() < nativeResizeSyncUntil) {
+    lastWindowBounds = mainWindow?.getBounds() || lastWindowBounds;
+    return;
+  }
+  resizeMainWindow();
 }
 
 function createTray() {
@@ -297,6 +387,9 @@ ipcMain.on('agent-command', (_e, cmd: string) => {
 ipcMain.handle('agent-run-once', () => runAgentOnce());
 ipcMain.on('log-drawer-open', (_e, open: boolean) => {
   setLogDrawerOpen(open);
+});
+ipcMain.on('pane-layout', (_e, layout: { mainWidth?: number; drawerWidth?: number; drawerOpen?: boolean }) => {
+  setPaneLayout(layout || {});
 });
 
 // 读取配置

@@ -55,6 +55,12 @@ body {
   overflow: hidden;
 }
 
+body.pane-resizing,
+body.pane-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
 button,
 input,
 textarea,
@@ -80,9 +86,9 @@ select:focus-visible {
   flex-direction: column;
   height: 100vh;
   height: 100dvh;
-  width: 430px;
+  width: var(--app-width, 430px);
   background: var(--bg);
-  max-width: 430px;
+  max-width: var(--app-width, 430px);
   margin: 0;
   position: relative;
   overflow: visible;
@@ -934,7 +940,7 @@ select:focus-visible {
   position: absolute;
   top: 0;
   left: 100%;
-  width: 390px;
+  width: var(--log-drawer-width, 390px);
   height: 100%;
   z-index: 30;
   pointer-events: none;
@@ -944,7 +950,7 @@ select:focus-visible {
   position: absolute;
   top: 0;
   left: 0;
-  width: 390px;
+  width: var(--log-drawer-width, 390px);
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -954,6 +960,47 @@ select:focus-visible {
   pointer-events: auto;
   animation: logDrawerOut 0.18s ease-out;
   transition: filter var(--transition), opacity var(--transition);
+}
+
+.pane-resize-handle {
+  position: absolute;
+  top: 0;
+  width: 10px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 60;
+}
+
+.pane-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 46px;
+  transform: translate(-50%, -50%);
+  border-radius: 99px;
+  background: var(--border);
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+
+.pane-resize-handle:hover::after,
+body.pane-resizing .pane-resize-handle::after {
+  opacity: 0.45;
+}
+
+.main-pane-resize-handle {
+  right: -5px;
+}
+
+.app.log-drawer-open > .main-pane-resize-handle {
+  display: none;
+}
+
+.log-pane-resize-handle {
+  left: -7px;
+  width: 14px;
 }
 
 .log-drawer::after {
