@@ -156,7 +156,7 @@ export default function ConfigPanel() {
   }
 
   return (
-    <div>
+    <div className="panel-stack config-stack">
       {/* Model Config */}
       <div className="card">
         <div className="card-header">

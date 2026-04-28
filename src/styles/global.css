@@ -280,10 +280,18 @@ select:focus-visible {
 
 .home-matrix {
   display: grid;
-  grid-template-columns: 1fr 1fr 1.05fr;
+  grid-template-columns: 2fr 1.05fr;
   grid-template-areas:
-    "hero small channel";
+    "stats channel";
   gap: 10px;
+}
+
+.home-stat-grid {
+  grid-area: stats;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .home-metric,
@@ -292,16 +300,26 @@ select:focus-visible {
   border: 3px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: 3px 3px 0 var(--border);
-  padding: 9px;
+  padding: 8px;
 }
 
-.home-metric.hero-metric {
-  grid-area: hero;
+.home-metric {
+  min-width: 0;
+}
+
+.home-metric.is-keyword {
   background: var(--accent-dim);
 }
 
-.home-metric:not(.hero-metric) {
-  grid-area: small;
+.home-metric.is-vision {
+  background: var(--yellow-dim);
+}
+
+.home-metric.is-reply {
+  background: var(--green-dim);
+}
+
+.home-metric.is-escalation {
   background: var(--red-dim);
 }
 
@@ -317,13 +335,14 @@ select:focus-visible {
   border-radius: var(--radius-sm);
   font-size: 9px;
   font-weight: 900;
+  white-space: nowrap;
 }
 
 .home-metric strong {
   display: block;
   font-family: var(--font-mono);
   color: var(--text);
-  font-size: 29px;
+  font-size: 23px;
   line-height: 0.95;
   font-weight: 900;
   letter-spacing: 0;
@@ -331,10 +350,11 @@ select:focus-visible {
 
 .home-metric small {
   display: block;
-  margin-top: 5px;
+  margin-top: 3px;
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 900;
+  white-space: nowrap;
 }
 
 .home-channel-card {
@@ -509,6 +529,35 @@ select:focus-visible {
 
 .card-header .card-title {
   margin-bottom: 0;
+}
+
+.panel-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-bottom: 18px;
+}
+
+.panel-stack > .card,
+.panel-stack > .drop-zone,
+.panel-stack > .btn-primary {
+  margin: 0;
+}
+
+.workflow-stack {
+  gap: 20px;
+}
+
+.workflow-stack .card {
+  padding: 16px;
+}
+
+.knowledge-stack {
+  gap: 20px;
+}
+
+.knowledge-stack .drop-zone {
+  margin-top: 2px;
 }
 
 /* ========================================

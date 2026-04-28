@@ -17,14 +17,70 @@ interface Connection {
   wecom: boolean;
 }
 
+interface DashboardStats {
+  keywordHits: number;
+  visionRecognitions: number;
+  aiReplies: number;
+  escalations: number;
+}
+
 const DEFAULT_MAIN_WIDTH = 430;
 const DEFAULT_LOG_WIDTH = 390;
 const MIN_MAIN_WIDTH = 375;
 const MAX_MAIN_WIDTH = 760;
 const MIN_LOG_WIDTH = 320;
 const MAX_LOG_WIDTH = 720;
+const STATS_STORAGE_KEY = 'vision-cs-dashboard-stats';
+const EMPTY_DASHBOARD_STATS: DashboardStats = {
+  keywordHits: 0,
+  visionRecognitions: 0,
+  aiReplies: 0,
+  escalations: 0,
+};
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+const todayKey = () => new Date().toISOString().slice(0, 10);
+
+const loadDashboardStats = (): DashboardStats => {
+  try {
+    const stored = localStorage.getItem(STATS_STORAGE_KEY);
+    if (!stored) return EMPTY_DASHBOARD_STATS;
+    const parsed = JSON.parse(stored);
+    if (parsed?.date !== todayKey()) return EMPTY_DASHBOARD_STATS;
+    return {
+      keywordHits: Number(parsed.keywordHits) || 0,
+      visionRecognitions: Number(parsed.visionRecognitions) || 0,
+      aiReplies: Number(parsed.aiReplies) || 0,
+      escalations: Number(parsed.escalations) || 0,
+    };
+  } catch {
+    return EMPTY_DASHBOARD_STATS;
+  }
+};
+
+const isRouteMatchedEvent = (event: AgentEvent) => {
+  if (event.type !== 'log') return false;
+  const message = String(event.data?.message || '');
+  if (/OpenClaw assistant route matched/i.test(message)) return false;
+  return /助手模式命中路由|OpenClaw route matched|route matched/i.test(message);
+};
+
+const incrementStatsForEvent = (stats: DashboardStats, event: AgentEvent): DashboardStats => {
+  if (isRouteMatchedEvent(event)) {
+    return { ...stats, keywordHits: stats.keywordHits + 1 };
+  }
+  if (event.type === 'vision') {
+    return { ...stats, visionRecognitions: stats.visionRecognitions + 1 };
+  }
+  if (event.type === 'reply') {
+    return { ...stats, aiReplies: stats.aiReplies + 1 };
+  }
+  if (event.type === 'escalation') {
+    return { ...stats, escalations: stats.escalations + 1 };
+  }
+  return stats;
+};
 
 const TabIcon = ({ name, active }: { name: string; active: boolean }) => {
   const color = active ? '#171717' : '#7B715F';
@@ -77,7 +133,7 @@ export default function App() {
   const [mainWidth, setMainWidth] = useState(DEFAULT_MAIN_WIDTH);
   const [logWidth, setLogWidth] = useState(DEFAULT_LOG_WIDTH);
   const [events, setEvents] = useState<AgentEvent[]>([]);
-  const [stats] = useState({ messages: 128, autoReplies: 126, escalations: 2 });
+  const [stats, setStats] = useState<DashboardStats>(() => loadDashboardStats());
   const [connections, setConnections] = useState<Connection>({ wechat: false, wecom: false });
   const paneSyncRef = useRef(false);
   const paneSyncTimerRef = useRef<number | null>(null);
@@ -146,6 +202,7 @@ export default function App() {
     const handleEvent = (event: AgentEvent) => {
       console.log('[FRONTEND EVENT]', event.type, event.data);
       setEvents((prev) => [...prev.slice(-100), event]);
+      setStats((prev) => incrementStatsForEvent(prev, event));
 
       if (event.type === 'status') {
         setRunning(event.data.state === 'running');
@@ -158,6 +215,13 @@ export default function App() {
       window.electronAPI?.removeAgentEventListener();
     };
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem(STATS_STORAGE_KEY, JSON.stringify({
+      date: todayKey(),
+      ...stats,
+    }));
+  }, [stats]);
 
   useEffect(() => {
     const checkConnections = async () => {

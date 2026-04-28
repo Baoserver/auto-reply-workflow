@@ -7,23 +7,25 @@ interface AgentEvent {
 
 interface Props {
   running: boolean;
-  stats: { messages: number; autoReplies: number; escalations: number };
+  stats: {
+    keywordHits: number;
+    visionRecognitions: number;
+    aiReplies: number;
+    escalations: number;
+  };
   connections?: { wechat: boolean; wecom: boolean };
   events?: AgentEvent[];
 }
 
 export default function Dashboard({ running, stats, connections, events = [] }: Props) {
-  const replyRate = stats.messages > 0
-    ? ((stats.autoReplies / stats.messages) * 100).toFixed(1)
-    : '0';
-
   const wechatConnected = connections?.wechat ?? false;
   const wecomConnected = connections?.wecom ?? false;
 
   const isRouteMatchedLog = (ev: AgentEvent) => {
     if (ev.type !== 'log') return false;
     const message = String(ev.data?.message || '');
-    return /命中路由|route matched/i.test(message);
+    if (/OpenClaw assistant route matched/i.test(message)) return false;
+    return /助手模式命中路由|OpenClaw route matched|route matched/i.test(message);
   };
   const isKeyHomeLog = (ev: AgentEvent) => (
     ev.type === 'vision' ||
@@ -238,15 +240,27 @@ export default function Dashboard({ running, stats, connections, events = [] }: 
       </section>
 
       <section className="home-matrix">
-        <div className="home-metric hero-metric">
-          <span className="home-metric-label">今日回复</span>
-          <strong>{stats.messages}</strong>
-          <small>自动回复率 {replyRate}%</small>
-        </div>
-        <div className="home-metric">
-          <span className="home-metric-label">转人工</span>
-          <strong>{stats.escalations}</strong>
-          <small>{stats.escalations > 0 ? '需要关注' : '暂无积压'}</small>
+        <div className="home-stat-grid">
+          <div className="home-metric is-keyword">
+            <span className="home-metric-label">关键字命中</span>
+            <strong>{stats.keywordHits}</strong>
+            <small>路由触发</small>
+          </div>
+          <div className="home-metric is-vision">
+            <span className="home-metric-label">Vision识别</span>
+            <strong>{stats.visionRecognitions}</strong>
+            <small>视觉分析</small>
+          </div>
+          <div className="home-metric is-reply">
+            <span className="home-metric-label">AI回复</span>
+            <strong>{stats.aiReplies}</strong>
+            <small>已生成</small>
+          </div>
+          <div className="home-metric is-escalation">
+            <span className="home-metric-label">转人工</span>
+            <strong>{stats.escalations}</strong>
+            <small>{stats.escalations > 0 ? '需关注' : '暂无'}</small>
+          </div>
         </div>
         <div className="home-channel-card">
           <div className="home-channel-title">设备连接</div>

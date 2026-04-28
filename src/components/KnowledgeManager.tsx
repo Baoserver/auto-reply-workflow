@@ -71,7 +71,7 @@ export default function KnowledgeManager() {
   }
 
   return (
-    <div>
+    <div className="panel-stack knowledge-stack">
       <div className="card">
         <div className="card-header">
           <span className="card-title">知识库文档</span>

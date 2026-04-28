@@ -240,7 +240,7 @@ export default function WorkflowPanel() {
   }
 
   return (
-    <div>
+    <div className="panel-stack workflow-stack">
       <div className="card">
         <div className="card-header">
           <span className="card-title">回复策略</span>
