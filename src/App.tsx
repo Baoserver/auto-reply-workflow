@@ -425,7 +425,10 @@ export default function App() {
             <span>返回</span>
           </button>
         ) : (
-          <span className="header-title">智回复</span>
+          <span className="header-title">
+            <img className="header-logo" src="assets/app-logo.png" alt="" />
+            智回复
+          </span>
         )}
         {tab !== 'settings' && (
           <button className="header-settings" title="设置" onClick={() => setTab('settings')}>

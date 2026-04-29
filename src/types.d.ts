@@ -5,6 +5,8 @@ interface ElectronAPI {
   startAgent: () => void;
   stopAgent: () => void;
   runAgentOnce: () => Promise<{ ok: boolean; reason?: string }>;
+  startMobilePairing: () => Promise<{ code: string; expiresAt: string } | null>;
+  getMobileServiceInfo: () => Promise<{ running: boolean; port: number | null }>;
   sendCommand: (cmd: string) => void;
   loadConfig: () => Promise<any>;
   saveConfig: (config: any) => Promise<boolean>;

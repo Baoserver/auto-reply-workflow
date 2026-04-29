@@ -4,9 +4,11 @@
   "description": "视觉智能客服 - macOS桌面应用",
   "main": "dist/electron/main.js",
   "scripts": {
-    "dev": "npx tsc && npx esbuild src/App.tsx --bundle --outdir=dist --platform=browser --format=iife --jsx=automatic && electron .",
-    "bundle": "npx esbuild src/App.tsx --bundle --outdir=dist --platform=browser --format=iife --jsx=automatic",
+    "copy-assets": "mkdir -p dist/assets && cp assets/app-logo.png dist/assets/app-logo.png",
+    "dev": "npx tsc && npx esbuild src/App.tsx --bundle --outdir=dist --platform=browser --format=iife --jsx=automatic && npm run copy-assets && electron .",
+    "bundle": "npx esbuild src/App.tsx --bundle --outdir=dist --platform=browser --format=iife --jsx=automatic && npm run copy-assets",
     "build": "npx tsc && npm run bundle && electron-builder",
+    "test": "npx tsc && node --test electron/*.test.js",
     "start": "electron ."
   },
   "keywords": [],
@@ -28,6 +30,7 @@
   "build": {
     "files": [
       "dist/**/*",
+      "assets/**/*",
       "electron/**/*",
       "agent/**/*",
       "config.yaml",
