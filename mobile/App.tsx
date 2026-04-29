@@ -127,6 +127,43 @@ function isKeyHomeEvent(event: AgentEvent) {
   return event.type === 'vision' || event.type === 'reply' || isRouteMatchedEvent(event);
 }
 
+function statsForEvents(events: AgentEvent[]): Record<StatsRange, DashboardStats> {
+  const next = {
+    day: { ...emptyStats },
+    month: { ...emptyStats },
+    year: { ...emptyStats },
+    total: { ...emptyStats },
+  };
+  const now = new Date();
+  const day = now.toISOString().slice(0, 10);
+  const month = day.slice(0, 7);
+  const year = day.slice(0, 4);
+  events.forEach((event) => {
+    let key: keyof DashboardStats | null = null;
+    if (isRouteMatchedEvent(event)) key = 'keywordHits';
+    if (event.type === 'ocr') key = 'visionRecognitions';
+    if (event.type === 'vision') key = 'visionRecognitions';
+    if (event.type === 'reply') key = 'aiReplies';
+    if (event.type === 'escalation') key = 'escalations';
+    if (!key) return;
+    const eventDay = new Date(event.ts || Date.now()).toISOString().slice(0, 10);
+    next.total[key] += 1;
+    if (eventDay.slice(0, 4) === year) next.year[key] += 1;
+    if (eventDay.slice(0, 7) === month) next.month[key] += 1;
+    if (eventDay === day) next.day[key] += 1;
+  });
+  return next;
+}
+
+function mergeStats(primary: DashboardStats, fallback: DashboardStats): DashboardStats {
+  return {
+    keywordHits: primary.keywordHits || fallback.keywordHits,
+    visionRecognitions: primary.visionRecognitions || fallback.visionRecognitions,
+    aiReplies: primary.aiReplies || fallback.aiReplies,
+    escalations: primary.escalations || fallback.escalations,
+  };
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>('home');
   const [serviceUrl, setServiceUrl] = useState('');
@@ -163,6 +200,13 @@ export default function App() {
     if (!serviceUrl || !token) return;
     const body = await request('/api/dashboard', { headers: authedHeaders });
     setDashboard(body);
+    if (Array.isArray(body.latestEvents) && body.latestEvents.length > 0) {
+      setEvents((prev) => {
+        const seen = new Set(prev.map((event) => event.id || `${event.ts}-${event.type}-${eventBody(event)}`));
+        const additions = body.latestEvents.filter((event: AgentEvent) => !seen.has(event.id || `${event.ts}-${event.type}-${eventBody(event)}`));
+        return additions.length > 0 ? [...prev, ...additions].slice(-100) : prev;
+      });
+    }
     setConnected(true);
   }, [authedHeaders, request, serviceUrl, token]);
 
@@ -264,7 +308,8 @@ export default function App() {
     await AsyncStorage.removeItem(STORAGE_KEYS.token);
   };
 
-  const visibleStats = dashboard.stats?.[range] || emptyStats;
+  const localStats = useMemo(() => statsForEvents(events), [events]);
+  const visibleStats = mergeStats(dashboard.stats?.[range] || emptyStats, localStats[range]);
   const visibleEvents = events.filter((event) => matchesFilter(event, filter)).slice().reverse();
   const keyEvents = events.filter(isKeyHomeEvent);
   const latestKeyEvents = keyEvents.slice(-6).reverse();
@@ -281,8 +326,9 @@ export default function App() {
         </View>
       </View>
 
+      <View style={styles.pageHost}>
       {tab === 'home' && (
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView style={styles.scroller} contentContainerStyle={styles.content}>
           <View style={[styles.homeHero, dashboard.running ? styles.homeHeroOn : styles.homeHeroOff]}>
             <View>
               <Text style={styles.homeKicker}>AUTO REPLY OPS</Text>
@@ -340,7 +386,7 @@ export default function App() {
       )}
 
       {tab === 'logs' && (
-        <View style={styles.content}>
+        <View style={styles.logsPage}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
             {(['all', 'vision', 'ocr', 'reply', 'escalation', 'error'] as LogFilter[]).map((item) => (
               <Pressable key={item} style={[styles.filterButton, filter === item && styles.filterActive]} onPress={() => setFilter(item)}>
@@ -351,6 +397,8 @@ export default function App() {
             ))}
           </ScrollView>
           <FlatList
+            style={styles.logsList}
+            contentContainerStyle={styles.logsListContent}
             data={visibleEvents}
             keyExtractor={(item, index) => item.id || `${item.ts}-${item.type}-${index}`}
             renderItem={({ item }) => <EventRow event={item} />}
@@ -360,7 +408,7 @@ export default function App() {
       )}
 
       {tab === 'connect' && (
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView style={styles.scroller} contentContainerStyle={styles.content}>
           <SectionTitle title="连接桌面服务" />
           <Text style={styles.label}>服务地址</Text>
           <TextInput
@@ -399,6 +447,7 @@ export default function App() {
           </View>
         </ScrollView>
       )}
+      </View>
 
       {tab !== 'connect' && (
         <View style={styles.actionBar}>
@@ -495,6 +544,8 @@ const styles = StyleSheet.create({
   online: { backgroundColor: '#C6F6D5' },
   offline: { backgroundColor: '#F3E7D3' },
   statusText: { fontSize: 11, fontWeight: '900', color: '#171717' },
+  pageHost: { flex: 1, minHeight: 0 },
+  scroller: { flex: 1 },
   content: { padding: 14, gap: 12, paddingBottom: 18 },
   homeHero: { minHeight: 132, padding: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', borderWidth: 3, borderColor: '#171717', borderRadius: 8, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 4, height: 4 }, shadowRadius: 0, transform: [{ rotate: '-0.45deg' }] },
   homeHeroOn: { backgroundColor: '#F7D748' },
@@ -504,16 +555,16 @@ const styles = StyleSheet.create({
   homeHeroCopy: { fontSize: 12, color: '#534A3D', maxWidth: 245, lineHeight: 17, fontWeight: '800' },
   homeHeroStamp: { borderWidth: 3, borderColor: '#171717', backgroundColor: '#FFFDF7', borderRadius: 6, paddingHorizontal: 11, paddingVertical: 8, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 3, height: 3 }, shadowRadius: 0 },
   homeHeroStampText: { fontSize: 20, fontWeight: '900', color: '#171717' },
-  homeMatrix: { flexDirection: 'row', gap: 10, alignItems: 'stretch' },
-  homeStatsCard: { flex: 2, minHeight: 188, flexDirection: 'row', overflow: 'hidden', backgroundColor: '#FFFDF7', borderWidth: 3, borderColor: '#171717', borderRadius: 8, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 3, height: 3 }, shadowRadius: 0 },
+  homeMatrix: { gap: 10, alignItems: 'stretch' },
+  homeStatsCard: { minHeight: 232, flexDirection: 'row', overflow: 'hidden', backgroundColor: '#FFFDF7', borderWidth: 3, borderColor: '#171717', borderRadius: 8, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 3, height: 3 }, shadowRadius: 0 },
   homeStatsTabs: { width: 58, backgroundColor: '#EFE7D8', borderRightWidth: 3, borderColor: '#171717' },
   homeStatsTab: { flex: 1, alignItems: 'center', justifyContent: 'center', borderBottomWidth: 3, borderColor: '#171717', paddingVertical: 5 },
   homeStatsTabActive: { backgroundColor: '#FFFDF7' },
   homeStatsTabText: { fontSize: 18, lineHeight: 20, fontWeight: '900', color: '#6B6255' },
   homeStatsTabHint: { fontSize: 9, lineHeight: 11, fontWeight: '900', color: '#6B6255', marginTop: 1 },
   homeStatsTabTextActive: { color: '#171717' },
-  homeStatGrid: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 8, padding: 8 },
-  statCard: { width: '47.8%', minHeight: 80, borderWidth: 3, borderColor: '#171717', borderRadius: 8, padding: 7, justifyContent: 'space-between' },
+  homeStatGrid: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignContent: 'space-between', padding: 8 },
+  statCard: { width: '48%', minHeight: 102, borderWidth: 3, borderColor: '#171717', borderRadius: 8, padding: 8, justifyContent: 'space-between', marginBottom: 8 },
   statKeyword: { backgroundColor: '#D9C8FF' },
   statVision: { backgroundColor: '#FFEBA8' },
   statReply: { backgroundColor: '#C9F2D1' },
@@ -521,7 +572,7 @@ const styles = StyleSheet.create({
   statLabel: { alignSelf: 'flex-start', backgroundColor: '#171717', color: '#FFFFFF', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2, fontSize: 9, fontWeight: '900', overflow: 'hidden' },
   statValue: { fontSize: 26, lineHeight: 28, fontWeight: '900', color: '#171717' },
   statHint: { fontSize: 9, lineHeight: 11, color: '#62594D', fontWeight: '900' },
-  homeChannelCard: { flex: 1.05, minHeight: 188, backgroundColor: '#FFEBA8', borderWidth: 3, borderColor: '#171717', borderRadius: 8, padding: 8, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 3, height: 3 }, shadowRadius: 0, transform: [{ rotate: '0.45deg' }] },
+  homeChannelCard: { minHeight: 124, backgroundColor: '#FFEBA8', borderWidth: 3, borderColor: '#171717', borderRadius: 8, padding: 8, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 3, height: 3 }, shadowRadius: 0, transform: [{ rotate: '0.45deg' }] },
   blackLabel: { alignSelf: 'flex-start', backgroundColor: '#171717', color: '#FFFFFF', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, fontSize: 9, fontWeight: '900', overflow: 'hidden', marginBottom: 8 },
   channelRow: { paddingVertical: 8, borderBottomWidth: 2, borderColor: '#171717', gap: 5 },
   channelName: { fontSize: 11, fontWeight: '900', color: '#171717' },
@@ -562,6 +613,9 @@ const styles = StyleSheet.create({
   eventTagOpenClaw: { backgroundColor: '#C9F2D1', color: '#171717' },
   eventTime: { color: '#7B715F', fontWeight: '800', fontSize: 10 },
   eventBody: { color: '#342F28', lineHeight: 19, fontWeight: '700', fontSize: 13 },
+  logsPage: { flex: 1, minHeight: 0, padding: 14 },
+  logsList: { flex: 1, minHeight: 0 },
+  logsListContent: { paddingBottom: 12, flexGrow: 1 },
   filterScroll: { maxHeight: 46, marginBottom: 10 },
   filterButton: { borderWidth: 3, borderColor: '#171717', borderRadius: 6, backgroundColor: '#FFFFFF', paddingHorizontal: 14, paddingVertical: 9, marginRight: 8 },
   filterActive: { backgroundColor: '#171717' },

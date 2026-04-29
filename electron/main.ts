@@ -103,12 +103,64 @@ function emitAgentEvent(event: any) {
   mobileService?.ingestAgentEvent(event);
 }
 
+const PROCESS_ALIASES: Record<string, string[]> = {
+  WeChat: ['WeChat', '微信'],
+  微信: ['WeChat', '微信'],
+  '企业微信': ['企业微信', 'WXWork', 'WeCom', 'Tencent WeWork'],
+  WXWork: ['企业微信', 'WXWork', 'WeCom', 'Tencent WeWork'],
+  WeCom: ['企业微信', 'WXWork', 'WeCom', 'Tencent WeWork'],
+};
+
 function isProcessRunning(name: string): boolean {
+  const names = PROCESS_ALIASES[name] || [name];
+  const shellEscape = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
   try {
-    const result = execSync(`pgrep -xi "${name}"`, { encoding: 'utf-8' });
-    return result.trim().length > 0;
-  } catch {
-    return false;
+    const result = execSync(
+      `osascript -e 'tell application "System Events" to get name of every process'`,
+      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    const processNames = result.split(',').map((item) => item.trim().toLowerCase());
+    if (names.some((candidate) => processNames.includes(candidate.toLowerCase()))) return true;
+  } catch {}
+
+  for (const candidate of names) {
+    try {
+      const exact = execSync(`pgrep -xi ${shellEscape(candidate)}`, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+      if (exact.trim().length > 0) return true;
+    } catch {}
+  }
+  return false;
+}
+
+async function getRendererDashboardStats() {
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  try {
+    return await mainWindow.webContents.executeJavaScript(`
+      (() => {
+        const normalize = (value) => ({
+          keywordHits: Number(value && value.keywordHits) || 0,
+          visionRecognitions: Number(value && value.visionRecognitions) || 0,
+          aiReplies: Number(value && value.aiReplies) || 0,
+          escalations: Number(value && value.escalations) || 0,
+        });
+        const raw = localStorage.getItem('vision-cs-dashboard-stats');
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (parsed && (parsed.day || parsed.month || parsed.year || parsed.total)) {
+          return {
+            day: normalize(parsed.day),
+            month: normalize(parsed.month),
+            year: normalize(parsed.year),
+            total: normalize(parsed.total),
+          };
+        }
+        const migrated = normalize(parsed);
+        return { day: migrated, month: migrated, year: migrated, total: migrated };
+      })()
+    `, true);
+  } catch (error) {
+    log(`getRendererDashboardStats failed: ${error}`);
+    return null;
   }
 }
 
@@ -650,6 +702,7 @@ app.whenReady().then(() => {
     userDataPath: app.getPath('userData'),
     appVersion: app.getVersion(),
     getAgentRunning: () => Boolean(agentProcess),
+    getDashboardStats: getRendererDashboardStats,
     startAgent,
     stopAgent,
     runAgentOnce,

@@ -42,6 +42,7 @@ export interface MobileControlServiceOptions {
   port?: number;
   appVersion: string;
   getAgentRunning: () => boolean;
+  getDashboardStats?: () => Promise<DashboardStatsStore | null> | DashboardStatsStore | null;
   startAgent: () => void;
   stopAgent: () => void;
   runAgentOnce: () => Promise<{ ok: boolean; reason?: string }>;
@@ -126,6 +127,25 @@ function increment(stats: DashboardStats, key: keyof DashboardStats) {
   stats[key] += 1;
 }
 
+function mergeStats(primary: DashboardStats, fallback: DashboardStats): DashboardStats {
+  return {
+    keywordHits: primary.keywordHits || fallback.keywordHits,
+    visionRecognitions: primary.visionRecognitions || fallback.visionRecognitions,
+    aiReplies: primary.aiReplies || fallback.aiReplies,
+    escalations: primary.escalations || fallback.escalations,
+  };
+}
+
+function mergeStatsStore(primary: DashboardStatsStore, fallback?: DashboardStatsStore | null): DashboardStatsStore {
+  if (!fallback) return primary;
+  return {
+    day: mergeStats(primary.day, fallback.day),
+    month: mergeStats(primary.month, fallback.month),
+    year: mergeStats(primary.year, fallback.year),
+    total: mergeStats(primary.total, fallback.total),
+  };
+}
+
 function isRouteMatchedEvent(event: AgentEvent) {
   if (event.type !== 'log') return false;
   const message = String(event.data?.message || '');
@@ -135,10 +155,31 @@ function isRouteMatchedEvent(event: AgentEvent) {
 
 function counterKeyForEvent(event: AgentEvent): keyof DashboardStats | null {
   if (isRouteMatchedEvent(event)) return 'keywordHits';
+  if (event.type === 'ocr') return 'visionRecognitions';
   if (event.type === 'vision') return 'visionRecognitions';
   if (event.type === 'reply') return 'aiReplies';
   if (event.type === 'escalation') return 'escalations';
   return null;
+}
+
+function summarizeConnectionsFromEvents(events: AgentEvent[]) {
+  let wechat: boolean | null = null;
+  let wecom: boolean | null = null;
+  for (const event of events.slice().reverse()) {
+    const windowName = String(event.data?.window || '');
+    const message = String(event.data?.message || '');
+    const text = `${windowName} ${message}`;
+    if (wecom === null && /企业微信/.test(text)) {
+      if (/未检测到\s*\[?企业微信\]?|请确认已打开/.test(text)) wecom = false;
+      if (/已检测到\s*\[?企业微信\]?|开始监控|画面变化|OCR|Vision/.test(text)) wecom = true;
+    }
+    if (wechat === null && /微信/.test(text) && !/企业微信/.test(text)) {
+      if (/未检测到\s*\[?微信\]?|请确认已打开/.test(text)) wechat = false;
+      if (/已检测到\s*\[?微信\]?|开始监控|画面变化|OCR|Vision/.test(text)) wechat = true;
+    }
+    if (wechat !== null && wecom !== null) break;
+  }
+  return { wechat, wecom };
 }
 
 function dayKey(date: Date) {
@@ -507,11 +548,16 @@ export class MobileControlService {
         this.options.checkProcess('企业微信'),
       ]);
       const events = this.eventStore.listEvents({ limit: 500 });
+      const desktopStats = await this.options.getDashboardStats?.();
+      const eventConnections = summarizeConnectionsFromEvents(events);
       sendJson(res, 200, {
         ok: true,
         running: this.options.getAgentRunning(),
-        connections: { wechat, wecom },
-        stats: this.eventStore.stats(),
+        connections: {
+          wechat: eventConnections.wechat ?? wechat,
+          wecom: eventConnections.wecom ?? wecom,
+        },
+        stats: mergeStatsStore(this.eventStore.stats(), desktopStats),
         latestEvents: events.filter((event) => (
           event.type === 'vision' ||
           event.type === 'reply' ||
