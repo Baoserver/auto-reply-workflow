@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startAgent: () => ipcRenderer.send('agent-start'),
   stopAgent: () => ipcRenderer.send('agent-stop'),
   runAgentOnce: () => ipcRenderer.invoke('agent-run-once'),
+  startMobilePairing: () => ipcRenderer.invoke('mobile-pair-start'),
+  getMobileServiceInfo: () => ipcRenderer.invoke('mobile-service-info'),
   sendCommand: (cmd: string) => ipcRenderer.send('agent-command', cmd),
   loadConfig: () => ipcRenderer.invoke('load-config'),
   saveConfig: (config: any) => ipcRenderer.invoke('save-config', config),

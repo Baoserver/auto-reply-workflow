@@ -3,12 +3,14 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { spawn, ChildProcess, execFile } from 'child_process';
 import { execSync } from 'child_process';
+import { MobileControlService } from './mobileControlService';
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let agentProcess: ChildProcess | null = null;
 let agentOnceProcess: ChildProcess | null = null;
 let autoStartTimer: NodeJS.Timeout | null = null;
+let mobileService: MobileControlService | null = null;
 
 let LOG_FILE: string;
 const DEFAULT_APP_WIDTH = 430;
@@ -88,9 +90,26 @@ function normalizeOpenClawConfig(config: any, mode: 'customer' | 'assistant') {
 }
 
 function createTrayIcon() {
-  const size = 16;
-  const img = nativeImage.createEmpty();
-  return img;
+  const img = nativeImage.createFromPath(getRendererAssetPath('app-logo.png'));
+  return img.isEmpty() ? nativeImage.createEmpty() : img.resize({ width: 18, height: 18 });
+}
+
+function getRendererAssetPath(filename: string): string {
+  return path.join(__dirname, '../assets', filename);
+}
+
+function emitAgentEvent(event: any) {
+  mainWindow?.webContents.send('agent-event', event);
+  mobileService?.ingestAgentEvent(event);
+}
+
+function isProcessRunning(name: string): boolean {
+  try {
+    const result = execSync(`pgrep -xi "${name}"`, { encoding: 'utf-8' });
+    return result.trim().length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function createWindow() {
@@ -106,6 +125,7 @@ function createWindow() {
     show: false,
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#F5F5F7',
+    icon: getRendererAssetPath('app-logo.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -242,6 +262,24 @@ function getAgentPath(): string {
   return path.join(__dirname, '../../agent/agent.py');
 }
 
+function getPythonPath(): string {
+  const candidates = [
+    process.env.VISION_CS_PYTHON,
+    '/opt/homebrew/bin/python3',
+    '/usr/local/bin/python3',
+    '/opt/homebrew/bin/python3.14',
+    '/usr/local/bin/python3.14',
+    'python3',
+  ].filter(Boolean) as string[];
+
+  for (const candidate of candidates) {
+    if (candidate === 'python3' || fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return 'python3';
+}
+
 function bindAgentEventStream(processRef: ChildProcess, label: string, onClose?: (code: number | null) => void) {
   let stdoutBuffer = '';
   const handleStdoutLine = (line: string) => {
@@ -262,7 +300,7 @@ function bindAgentEventStream(processRef: ChildProcess, label: string, onClose?:
         })
         : JSON.stringify(event);
       log(`AGENT EVENT: ${logPayload}`);
-      mainWindow?.webContents.send('agent-event', event);
+      emitAgentEvent(event);
     } catch (e) {
       log(`PARSE ERROR: ${line} ${e}`);
     }
@@ -279,7 +317,7 @@ function bindAgentEventStream(processRef: ChildProcess, label: string, onClose?:
 
   processRef.stderr?.on('data', (data: Buffer) => {
     log(`${label} STDERR: ${data.toString()}`);
-    mainWindow?.webContents.send('agent-event', {
+    emitAgentEvent({
       type: 'log',
       data: { level: 'error', message: data.toString() },
     });
@@ -287,7 +325,7 @@ function bindAgentEventStream(processRef: ChildProcess, label: string, onClose?:
 
   processRef.on('error', (err) => {
     log(`${label} PROCESS ERROR: ${err}`);
-    mainWindow?.webContents.send('agent-event', {
+    emitAgentEvent({
       type: 'log',
       data: { level: 'error', message: `进程错误: ${err}` },
     });
@@ -310,19 +348,21 @@ function startAgent() {
   console.log('[startAgent] resourcesPath:', process.resourcesPath);
 
   const agentPath = getAgentPath();
+  const pythonPath = getPythonPath();
 
   log(`agentPath: ${agentPath}`);
+  log(`pythonPath: ${pythonPath}`);
   log(`isPackaged: ${app.isPackaged}`);
   log(`resourcesPath: ${process.resourcesPath}`);
 
   try {
-    agentProcess = spawn('python3', [agentPath], {
+    agentProcess = spawn(pythonPath, [agentPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     log(`spawn succeeded, pid: ${agentProcess.pid}`);
   } catch (err) {
     log(`spawn error: ${err}`);
-    mainWindow?.webContents.send('agent-event', {
+    emitAgentEvent({
       type: 'log',
       data: { level: 'error', message: `启动失败: ${err}` },
     });
@@ -340,7 +380,7 @@ function startAgent() {
   setTimeout(() => {
     if (agentProcess !== currentProcess) return;
     log(`mainWindow exists: ${!!mainWindow}`);
-    mainWindow?.webContents.send('agent-event', { type: 'status', data: { state: 'running' } });
+    emitAgentEvent({ type: 'status', data: { state: 'running' } });
   }, 1000);
 }
 
@@ -360,7 +400,7 @@ function stopAgent() {
       agentProcess = null;
     }
   }, 1500);
-  mainWindow?.webContents.send('agent-event', { type: 'status', data: { state: 'stopped' } });
+  emitAgentEvent({ type: 'status', data: { state: 'stopped' } });
 }
 
 function runAgentOnce(): Promise<{ ok: boolean; reason?: string }> {
@@ -372,17 +412,19 @@ function runAgentOnce(): Promise<{ ok: boolean; reason?: string }> {
   }
 
   const agentPath = getAgentPath();
+  const pythonPath = getPythonPath();
   log(`agent once path: ${agentPath}`);
+  log(`agent once pythonPath: ${pythonPath}`);
 
   return new Promise((resolve) => {
     try {
-      agentOnceProcess = spawn('python3', [agentPath, '--once'], {
+      agentOnceProcess = spawn(pythonPath, [agentPath, '--once'], {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       log(`agent once spawn succeeded, pid: ${agentOnceProcess.pid}`);
     } catch (err) {
       log(`agent once spawn error: ${err}`);
-      mainWindow?.webContents.send('agent-event', {
+      emitAgentEvent({
         type: 'log',
         data: { level: 'error', message: `单次识别启动失败: ${err}` },
       });
@@ -408,6 +450,11 @@ ipcMain.on('agent-command', (_e, cmd: string) => {
   agentProcess?.stdin?.write(JSON.stringify({ action: cmd }) + '\n');
 });
 ipcMain.handle('agent-run-once', () => runAgentOnce());
+ipcMain.handle('mobile-pair-start', () => mobileService?.startPairing() || null);
+ipcMain.handle('mobile-service-info', () => ({
+  running: Boolean(mobileService),
+  port: mobileService?.port || null,
+}));
 ipcMain.on('log-drawer-open', (_e, open: boolean) => {
   setLogDrawerOpen(open);
 });
@@ -591,12 +638,7 @@ ipcMain.handle('delete-knowledge-file', async (_e, filename: string) => {
 
 // 检查进程是否存在
 ipcMain.handle('check-process', async (_e, name: string) => {
-  try {
-    const result = execSync(`pgrep -xi "${name}"`, { encoding: 'utf-8' });
-    return result.trim().length > 0;
-  } catch {
-    return false;
-  }
+  return isProcessRunning(name);
 });
 
 // --- App 生命周期 ---
@@ -604,6 +646,18 @@ ipcMain.handle('check-process', async (_e, name: string) => {
 app.whenReady().then(() => {
   createWindow();
   createTray();
+  mobileService = new MobileControlService({
+    userDataPath: app.getPath('userData'),
+    appVersion: app.getVersion(),
+    getAgentRunning: () => Boolean(agentProcess),
+    startAgent,
+    stopAgent,
+    runAgentOnce,
+    checkProcess: async (name: string) => isProcessRunning(name),
+  });
+  mobileService.start()
+    .then(() => log(`mobile control service listening on port ${mobileService?.port}`))
+    .catch((error) => log(`mobile control service failed: ${error}`));
   // Auto-start agent for testing
   autoStartTimer = setTimeout(() => {
     autoStartTimer = null;
@@ -613,6 +667,10 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('before-quit', () => {
+  mobileService?.stop();
 });
 
 app.on('activate', () => {

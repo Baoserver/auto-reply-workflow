@@ -100,6 +100,8 @@ export default function ConfigPanel() {
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [mobileInfo, setMobileInfo] = useState<{ running: boolean; port: number | null }>({ running: false, port: null });
+  const [pairing, setPairing] = useState<{ code: string; expiresAt: string } | null>(null);
 
   useEffect(() => {
     const loadConfig = async () => {
@@ -151,6 +153,18 @@ export default function ConfigPanel() {
     loadConfig();
   }, []);
 
+  useEffect(() => {
+    const loadMobileInfo = async () => {
+      if (!window.electronAPI?.getMobileServiceInfo) return;
+      try {
+        const info = await window.electronAPI.getMobileServiceInfo();
+        setMobileInfo(info || { running: false, port: null });
+      } catch {}
+    };
+
+    loadMobileInfo();
+  }, []);
+
   const save = async () => {
     if (window.electronAPI) {
       const success = await window.electronAPI.saveConfig(config);
@@ -170,6 +184,12 @@ export default function ConfigPanel() {
     setConfig((prev) => ({ ...prev, [key]: value }));
   };
 
+  const startMobilePairing = async () => {
+    if (!window.electronAPI?.startMobilePairing) return;
+    const pair = await window.electronAPI.startMobilePairing();
+    setPairing(pair);
+  };
+
   if (loading) {
     return (
       <div className="card">
@@ -180,6 +200,34 @@ export default function ConfigPanel() {
 
   return (
     <div className="panel-stack config-stack">
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">手机连接</span>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+            {mobileInfo.running ? `端口 ${mobileInfo.port}` : '未启动'}
+          </span>
+        </div>
+        <div className="form-group">
+          <label>局域网服务地址</label>
+          <input readOnly value={mobileInfo.port ? `http://<本机局域网IP>:${mobileInfo.port}` : '服务启动中...'} />
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>
+            手机和 Mac 连接同一 Wi-Fi 后，在 App 连接页填入该地址。
+          </div>
+        </div>
+        {pairing && (
+          <div className="form-group">
+            <label>配对码</label>
+            <input readOnly value={pairing.code} style={{ fontSize: 24, fontWeight: 900, letterSpacing: 4, textAlign: 'center' }} />
+            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>
+              5 分钟内有效，过期时间 {new Date(pairing.expiresAt).toLocaleTimeString()}
+            </div>
+          </div>
+        )}
+        <button className="btn-primary" onClick={startMobilePairing} style={{ width: '100%' }}>
+          生成手机配对码
+        </button>
+      </div>
+
       {/* Model Config */}
       <div className="card">
         <div className="card-header">

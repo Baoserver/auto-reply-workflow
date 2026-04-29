@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "智回复移动端",
+    "slug": "vision-cs-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/app-logo.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#F5F5F7",
+      "resizeMode": "contain"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.visioncs.mobile"
+    },
+    "android": {
+      "package": "com.visioncs.mobile",
+      "versionCode": 1,
+      "usesCleartextTraffic": true,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#F5F5F7"
+      },
+      "permissions": ["INTERNET"]
+    }
+  }
+}

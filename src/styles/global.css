@@ -127,6 +127,9 @@ select:focus-visible {
 }
 
 .header-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   font-size: 21px;
   font-weight: 900;
   letter-spacing: 0;
@@ -135,16 +138,15 @@ select:focus-visible {
   line-height: 1;
 }
 
-.header-title::before,
-.header-title::after {
-  content: "";
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  margin: 0 9px 2px;
-  background: var(--red);
+.header-logo {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
   border: 2px solid var(--border);
-  transform: rotate(8deg);
+  border-radius: 10px;
+  background: #fff3d8;
+  box-shadow: 2px 2px 0 var(--border);
+  pointer-events: none;
 }
 
 .header-settings {

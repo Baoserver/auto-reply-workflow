@@ -56,3 +56,11 @@ openclaw:
         agent_id: qinwu-yuan
         agent_name: 勤务猿
         extra_prompt: 根据上述对话信息，在飞书任务中创建任务。并最后给我返回任务名称
+      - enabled: true
+        keywords: 收到低修任务
+        agent_id: wenruan-niu
+        agent_name: 稳如牛
+        extra_prompt: |-
+          提取上述对话信息中的待处理信息。格式：
+          <线路名称>：<修改低消金额>
+          然后使用mcp:dixiao-key-manager去处理
