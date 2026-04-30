@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { spawn, ChildProcess, execFile } from 'child_process';
 import { execSync } from 'child_process';
 import { MobileControlService } from './mobileControlService';
+import { buildNestedConfig, DEFAULT_OPENCLAW_CLI_PATH } from './configSerialization';
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -64,31 +65,6 @@ function getKnowledgeDir(): string {
 
 const CONFIG_PATH = getConfigPath();
 const KNOWLEDGE_DIR = getKnowledgeDir();
-const DEFAULT_OPENCLAW_CLI_PATH = '/opt/homebrew/bin/openclaw';
-
-function normalizeOpenClawRoutes(routes: any) {
-  return Array.isArray(routes) ? routes : [];
-}
-
-function normalizeOpenClawConfig(config: any, mode: 'customer' | 'assistant') {
-  const nested = mode === 'assistant' ? config.openclaw_assistant : config.openclaw_customer;
-  const legacy = {
-    enabled: config.openclaw_enabled,
-    cli_path: config.openclaw_cli_path,
-    timeout_seconds: config.openclaw_timeout_seconds,
-    extra_prompt: config.openclaw_extra_prompt,
-    routes: config.openclaw_routes,
-  };
-  const source = nested && typeof nested === 'object' ? nested : legacy;
-  return {
-    enabled: source.enabled ?? false,
-    cli_path: source.cli_path || DEFAULT_OPENCLAW_CLI_PATH,
-    timeout_seconds: source.timeout_seconds || 120,
-    extra_prompt: source.extra_prompt || '',
-    routes: normalizeOpenClawRoutes(source.routes),
-  };
-}
-
 function createTrayIcon() {
   const img = nativeImage.createFromPath(getRendererAssetPath('app-logo.png'));
   return img.isEmpty() ? nativeImage.createEmpty() : img.resize({ width: 18, height: 18 });
@@ -393,6 +369,32 @@ function bindAgentEventStream(processRef: ChildProcess, label: string, onClose?:
   });
 }
 
+async function loadConfigForMobile() {
+  try {
+    if (fs.existsSync(CONFIG_PATH)) {
+      const yaml = require('js-yaml');
+      return yaml.load(fs.readFileSync(CONFIG_PATH, 'utf-8')) || {};
+    }
+  } catch (e) {
+    log(`mobile load config failed: ${e}`);
+  }
+  return {};
+}
+
+async function saveConfigForMobile(config: any) {
+  try {
+    const yaml = require('js-yaml');
+    fs.writeFileSync(CONFIG_PATH, yaml.dump(config), 'utf-8');
+    if (agentProcess?.stdin?.writable) {
+      agentProcess.stdin.write(JSON.stringify({ action: 'reload_config' }) + '\n');
+    }
+    return true;
+  } catch (e) {
+    log(`mobile save config failed: ${e}`);
+    return false;
+  }
+}
+
 function startAgent() {
   if (agentProcess) return;
 
@@ -564,48 +566,7 @@ ipcMain.handle('load-config', async () => {
 ipcMain.handle('save-config', async (_e, config: any) => {
   try {
     const yaml = require('js-yaml');
-    const nestedConfig = {
-      minimax: {
-        api_key: config.minimax_api_key || '',
-        group_id: config.minimax_group_id || '',
-        vision_model: config.minimax_vision_model || 'MiniMax-VL-01',
-        text_model: config.minimax_text_model || 'MiniMax-Text-01',
-      },
-      feishu: {
-        webhook_url: config.feishu_webhook_url || '',
-      },
-      wechat: {
-        enabled: config.wechat_enabled ?? true,
-        window_title: '微信',
-      },
-      wecom: {
-        enabled: config.wecom_enabled ?? true,
-        window_title: '企业微信',
-      },
-      workflow_mode: config.workflow_mode || 'customer',
-      mode: config.mode || 'auto',
-      escalation: {
-        keywords: config.escalation_keywords || '退款,投诉,经理,报警',
-        max_unsolved_rounds: config.max_unsolved_rounds || 2,
-      },
-      reply_delay_min: config.reply_delay_min || 1,
-      reply_delay_max: config.reply_delay_max || 3,
-
-      ocr: {
-        enabled: config.ocr_enabled ?? true,
-        fast_mode: config.ocr_fast_mode ?? true,
-        check_interval: config.ocr_check_interval || 3,
-        chat_region_mode: config.ocr_chat_region_mode || 'auto',
-        chat_region: Array.isArray(config.ocr_chat_region) ? config.ocr_chat_region : [0.35, 0.0, 1.0, 1.0],
-        languages: ["zh-Hans", "en"],
-        trigger_keywords: config.ocr_trigger_keywords || "",
-      },
-      openclaw: {
-        customer: normalizeOpenClawConfig(config, 'customer'),
-        assistant: normalizeOpenClawConfig(config, 'assistant'),
-      },
-
-    };
+    const nestedConfig = buildNestedConfig(config);
     fs.writeFileSync(CONFIG_PATH, yaml.dump(nestedConfig), 'utf-8');
     if (agentProcess?.stdin?.writable) {
       agentProcess.stdin.write(JSON.stringify({ action: 'reload_config' }) + '\n');
@@ -741,6 +702,8 @@ app.whenReady().then(() => {
     confirmPendingReply,
     cancelPendingReply,
     checkProcess: async (name: string) => isProcessRunning(name),
+    loadConfig: loadConfigForMobile,
+    saveConfig: saveConfigForMobile,
   });
   mobileService.start()
     .then(() => log(`mobile control service listening on port ${mobileService?.port}`))

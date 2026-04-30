@@ -34,8 +34,8 @@ def cleanup_screenshots_dir(max_files: int = MAX_SCREENSHOT_FILES):
         print(f"cleanup screenshots error: {e}")
 
 class ScreenCapture:
-    def _get_window_id(self, window_name: str) -> str:
-        """通过 Quartz 获取窗口 ID，选择最大的窗口"""
+    def _find_window(self, window_name: str):
+        """通过 Quartz 找到指定应用最大的主窗口。"""
         try:
             windows = CGWindowListCopyWindowInfo(kCGWindowListExcludeDesktopElements, kCGNullWindowID)
             best_window = None
@@ -54,12 +54,34 @@ class ScreenCapture:
                     # 选择最大的窗口（通常是主聊天窗口）
                     if area > best_area and area > 10000:  # 忽略太小的窗口
                         best_area = area
-                        best_window = win.get('kCGWindowNumber')
-            if best_window:
-                return str(best_window)
+                        best_window = win
+            return best_window
         except Exception as e:
             print(f"Quartz error: {e}")
+        return None
+
+    def _get_window_id(self, window_name: str) -> str:
+        """通过 Quartz 获取窗口 ID，选择最大的窗口"""
+        best_window = self._find_window(window_name)
+        if best_window:
+            return str(best_window.get('kCGWindowNumber'))
         return ""
+
+    def get_window_bounds(self, window_name: str) -> dict | None:
+        """获取指定窗口坐标和尺寸，用于窗口内相对点击。"""
+        best_window = self._find_window(window_name)
+        if not best_window:
+            return None
+        bounds = best_window.get('kCGWindowBounds', {})
+        try:
+            return {
+                "x": int(bounds.get('X', 0)),
+                "y": int(bounds.get('Y', 0)),
+                "width": int(bounds.get('Width', 0)),
+                "height": int(bounds.get('Height', 0)),
+            }
+        except Exception:
+            return None
 
     def capture_window(self, window_name: str = "微信") -> str:
         """截取指定窗口，返回图片文件路径"""

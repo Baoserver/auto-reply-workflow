@@ -59,6 +59,8 @@ export interface MobileControlServiceOptions {
   confirmPendingReply: (id: string, content: string) => Promise<{ ok: boolean; reason?: string }> | { ok: boolean; reason?: string };
   cancelPendingReply: (id: string) => Promise<{ ok: boolean; reason?: string }> | { ok: boolean; reason?: string };
   checkProcess: (name: string) => Promise<boolean>;
+  loadConfig?: () => Promise<any> | any;
+  saveConfig?: (config: any) => Promise<boolean> | boolean;
 }
 
 const DEFAULT_PORT = 47831;
@@ -156,6 +158,73 @@ function mergeStatsStore(primary: DashboardStatsStore, fallback?: DashboardStats
     year: mergeStats(primary.year, fallback.year),
     total: mergeStats(primary.total, fallback.total),
   };
+}
+
+function sanitizeMobileConfig(config: any) {
+  const ocr = config.ocr || {};
+  return {
+    wechat: { enabled: config.wechat?.enabled ?? true },
+    wecom: { enabled: config.wecom?.enabled ?? true },
+    workflow_mode: config.workflow_mode || 'customer',
+    mode: config.mode || 'auto',
+    escalation: {
+      keywords: config.escalation?.keywords || '退款,投诉,经理,报警',
+      max_unsolved_rounds: Number(config.escalation?.max_unsolved_rounds) || 2,
+    },
+    reply_delay_min: Number(config.reply_delay_min) || 1,
+    reply_delay_max: Number(config.reply_delay_max) || 3,
+    ocr: {
+      enabled: ocr.enabled ?? true,
+      fast_mode: ocr.fast_mode ?? true,
+      check_interval: Number(ocr.check_interval) || 3,
+      guard_enabled: ocr.guard_enabled ?? false,
+      guard_previous_check_interval: Number(ocr.guard_previous_check_interval) || 3,
+      trigger_keywords: ocr.trigger_keywords || '',
+    },
+  };
+}
+
+function mergeMobileConfig(current: any, patch: any) {
+  const allowedWorkflowMode = patch.workflow_mode === 'assistant' ? 'assistant' : patch.workflow_mode === 'customer' ? 'customer' : current.workflow_mode;
+  const allowedMode = patch.mode === 'assist' ? 'assist' : patch.mode === 'auto' ? 'auto' : current.mode;
+  const next = {
+    ...current,
+    wechat: { ...(current.wechat || {}) },
+    wecom: { ...(current.wecom || {}) },
+    escalation: { ...(current.escalation || {}) },
+    ocr: { ...(current.ocr || {}) },
+  };
+
+  if (patch.wechat && typeof patch.wechat.enabled === 'boolean') next.wechat.enabled = patch.wechat.enabled;
+  if (patch.wecom && typeof patch.wecom.enabled === 'boolean') next.wecom.enabled = patch.wecom.enabled;
+  if (allowedWorkflowMode) next.workflow_mode = allowedWorkflowMode;
+  if (allowedMode) next.mode = allowedMode;
+  if (patch.escalation) {
+    if (typeof patch.escalation.keywords === 'string') next.escalation.keywords = patch.escalation.keywords;
+    const maxRounds = Number(patch.escalation.max_unsolved_rounds);
+    if (Number.isFinite(maxRounds)) next.escalation.max_unsolved_rounds = Math.min(Math.max(Math.round(maxRounds), 1), 10);
+  }
+  if (patch.ocr) {
+    if (typeof patch.ocr.enabled === 'boolean') next.ocr.enabled = patch.ocr.enabled;
+    if (typeof patch.ocr.fast_mode === 'boolean') next.ocr.fast_mode = patch.ocr.fast_mode;
+    if (typeof patch.ocr.trigger_keywords === 'string') next.ocr.trigger_keywords = patch.ocr.trigger_keywords;
+    if (typeof patch.ocr.guard_enabled === 'boolean') {
+      const currentInterval = Number(next.ocr.check_interval) || 3;
+      if (patch.ocr.guard_enabled && !next.ocr.guard_enabled) {
+        next.ocr.guard_previous_check_interval = currentInterval;
+        next.ocr.check_interval = 60;
+      } else if (!patch.ocr.guard_enabled && next.ocr.guard_enabled) {
+        next.ocr.check_interval = Number(next.ocr.guard_previous_check_interval) || 3;
+      }
+      next.ocr.guard_enabled = patch.ocr.guard_enabled;
+    }
+    const interval = Number(patch.ocr.check_interval);
+    if (Number.isFinite(interval) && !next.ocr.guard_enabled) {
+      next.ocr.check_interval = Math.min(Math.max(Math.round(interval), 1), 60);
+    }
+  }
+
+  return next;
 }
 
 function isRouteMatchedEvent(event: AgentEvent) {
@@ -598,6 +667,28 @@ export class MobileControlService {
           isRouteMatchedEvent(event)
         )).slice(-6),
       });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/config') {
+      const config = await this.options.loadConfig?.();
+      sendJson(res, 200, {
+        ok: true,
+        config: sanitizeMobileConfig(config || {}),
+      });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/config') {
+      if (!this.options.loadConfig || !this.options.saveConfig) {
+        sendJson(res, 501, { ok: false, error: 'config API unavailable' });
+        return;
+      }
+      const body = await readBody(req);
+      const current = await this.options.loadConfig();
+      const next = mergeMobileConfig(current || {}, body.config || {});
+      const ok = await this.options.saveConfig(next);
+      sendJson(res, ok ? 200 : 500, { ok, config: sanitizeMobileConfig(next) });
       return;
     }
 

@@ -13,6 +13,7 @@ from screen_capture import cleanup_screenshots_dir
 from vision import VisionAnalyzer
 from local_ocr import LocalOCR
 from openclaw_client import OpenClawClient
+from wechat_operator import WeChatOperator
 
 
 # 系统/通知类消息，不应触发客服回复
@@ -74,16 +75,18 @@ class WeChatDetector:
         self.workflow_mode = config.get("workflow_mode", "customer")
         self.local_ocr = LocalOCR(config)
         self.openclaw = OpenClawClient(config, mode=self.workflow_mode)
+        self.operator = WeChatOperator()
 
         self._running = False
         self._thread = None
-        self._check_interval = config.get("ocr", {}).get("check_interval", 3)
+        ocr_cfg = config.get("ocr", {})
+        self.guard_enabled = ocr_cfg.get("guard_enabled", False)
+        self._check_interval = 60 if self.guard_enabled else ocr_cfg.get("check_interval", 3)
 
         self._window_states: dict[str, WindowState] = {}
         self._processed_hashes: list[str] = []
         self._max_dedup = 100
 
-        ocr_cfg = config.get("ocr", {})
         self.trigger_keywords = [k.strip() for k in ocr_cfg.get("trigger_keywords", "").split(",") if k.strip()]
         # 只合并当前工作模式的 OpenClaw 路由关键词，避免客服/助手路由串用。
         for route in self.openclaw.routes:
@@ -103,7 +106,8 @@ class WeChatDetector:
         self._thread = threading.Thread(target=self._monitor_loop, args=(callback, assistant_callback, escalation_callback), daemon=True)
         self._thread.start()
         mode_label = "助手模式" if self.workflow_mode == "assistant" else "客服模式"
-        emit_log("info", f"检测器已启动，模式={mode_label}，间隔 {self._check_interval}s，本地OCR={'开启' if self.local_ocr.enabled else '关闭'}，触发词: {self.trigger_keywords or '(无，全部放行)'}")
+        guard_label = "，值守=开启" if self.guard_enabled else ""
+        emit_log("info", f"检测器已启动，模式={mode_label}，间隔 {self._check_interval}s{guard_label}，本地OCR={'开启' if self.local_ocr.enabled else '关闭'}，触发词: {self.trigger_keywords or '(无，全部放行)'}")
 
     def check_once(self, callback, assistant_callback=None, escalation_callback=None):
         mode_label = "助手模式" if self.workflow_mode == "assistant" else "客服模式"
@@ -143,6 +147,9 @@ class WeChatDetector:
                 if window_name not in self._first_check_logged:
                     self._first_check_logged.add(window_name)
                     emit_log("info", f"已检测到 [{window_name}] 窗口 (id={window_id})，开始监控")
+
+                if self.guard_enabled:
+                    self._prepare_guard_conversation(window_name)
 
                 screenshot_path = self.capture.capture_window(window_name)
             except Exception as e:
@@ -331,6 +338,17 @@ class WeChatDetector:
             except Exception as e:
                 emit_log("error", f"视觉API异常: {e}")
                 self._maybe_cleanup_screenshot(screenshot_path)
+
+    def _prepare_guard_conversation(self, window_name: str):
+        try:
+            bounds = self.capture.get_window_bounds(window_name)
+            if not bounds:
+                emit_log("warn", f"[{window_name}] 值守点击跳过：未获取到窗口坐标")
+                return
+            self.operator.click_first_conversation(window_name, bounds)
+            emit_log("info", f"[{window_name}] 值守已点击第一条会话")
+        except Exception as e:
+            emit_log("warn", f"[{window_name}] 值守点击第一条会话失败，继续OCR: {e}")
 
     def _handle_assistant_workflow(
         self,

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 interface AgentEvent {
   type: string;
@@ -35,9 +35,29 @@ const STAT_TABS: Array<{ key: StatsRange; label: string; hint: string }> = [
 
 export default function Dashboard({ running, stats, connections, events = [] }: Props) {
   const [statsRange, setStatsRange] = useState<StatsRange>('day');
+  const [guardEnabled, setGuardEnabled] = useState(false);
   const wechatConnected = connections?.wechat ?? false;
   const wecomConnected = connections?.wecom ?? false;
   const currentStats = stats[statsRange];
+
+  useEffect(() => {
+    const loadGuardState = async () => {
+      try {
+        const loaded = await window.electronAPI?.loadConfig?.();
+        setGuardEnabled(Boolean(loaded?.ocr?.guard_enabled));
+      } catch {
+        setGuardEnabled(false);
+      }
+    };
+
+    loadGuardState();
+    window.addEventListener('focus', loadGuardState);
+    document.addEventListener('visibilitychange', loadGuardState);
+    return () => {
+      window.removeEventListener('focus', loadGuardState);
+      document.removeEventListener('visibilitychange', loadGuardState);
+    };
+  }, []);
 
   const isRouteMatchedLog = (ev: AgentEvent) => {
     if (ev.type !== 'log') return false;
@@ -246,8 +266,11 @@ export default function Dashboard({ running, stats, connections, events = [] }: 
 
   return (
     <div className="dashboard">
-      <section className={`home-hero ${running ? 'is-running' : 'is-paused'}`}>
-        <div>
+      <section className={`home-hero ${running ? 'is-running' : 'is-paused'} ${guardEnabled ? 'is-guard' : ''}`}>
+        {guardEnabled && (
+          <img className="home-hero-robot" src="assets/bot-tubiao.png" alt="" aria-hidden="true" />
+        )}
+        <div className="home-hero-copy">
           <div className="home-kicker">AUTO REPLY OPS</div>
           <h1>{running ? '托管运行中' : '等待启动'}</h1>
           <p>{running ? '正在监听窗口变化、OCR 与回复链路。' : '点击底部按钮开始识别微信与企业微信。'}</p>

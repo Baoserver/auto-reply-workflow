@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <path d="M257 528C181 574 128 657 96 745c86 11 164-7 231-54l21-136-91-27Z" fill="#FF6558" stroke="#1C1C1A" stroke-width="28" stroke-linejoin="round"/>
+  <path d="M767 528c76 46 129 129 161 217-86 11-164-7-231-54l-21-136 91-27Z" fill="#FF6A5C" stroke="#1C1C1A" stroke-width="28" stroke-linejoin="round"/>
+  <path d="M314 699l-19 189c-3 29 17 55 46 58l94 8 12-207-133-48Z" fill="#FFF5DA" stroke="#1C1C1A" stroke-width="28" stroke-linejoin="round"/>
+  <path d="M710 699l19 189c3 29-17 55-46 58l-94 8-12-207 133-48Z" fill="#FFF5DA" stroke="#1C1C1A" stroke-width="28" stroke-linejoin="round"/>
+  <path d="M512 137v98" stroke="#1C1C1A" stroke-width="28" stroke-linecap="round"/>
+  <circle cx="512" cy="101" r="39" fill="#FFF2D7" stroke="#1C1C1A" stroke-width="24"/>
+  <path d="M260 406c0-111 90-201 201-201h102c111 0 201 90 201 201v44c0 112-90 202-201 202H461c-111 0-201-90-201-202v-44Z" fill="#FFF1D3" stroke="#1C1C1A" stroke-width="34"/>
+  <path d="M199 406c0-46 37-83 83-83h20v166h-20c-46 0-83-37-83-83Z" fill="#FFF4DF" stroke="#1C1C1A" stroke-width="26"/>
+  <path d="M822 406c0-46-37-83-83-83h-20v166h20c46 0 83-37 83-83Z" fill="#FFF4DF" stroke="#1C1C1A" stroke-width="26"/>
+  <rect x="333" y="313" width="358" height="143" rx="64" fill="#171918" stroke="#1C1C1A" stroke-width="18"/>
+  <rect x="407" y="351" width="31" height="67" rx="16" fill="#FFE15A"/>
+  <rect x="586" y="351" width="31" height="67" rx="16" fill="#FFE15A"/>
+  <path d="M298 598c0-60 49-109 109-109h210c60 0 109 49 109 109v41c0 118-96 214-214 214S298 757 298 639v-41Z" fill="#FFF6DE" stroke="#1C1C1A" stroke-width="30"/>
+  <path d="M512 504c-64 34-134 58-208 70v68c0 111 81 205 208 248 127-43 208-137 208-248v-68c-74-12-144-36-208-70Z" fill="#FFF1D1" stroke="#1C1C1A" stroke-width="28" stroke-linejoin="round"/>
+  <path d="M512 547c-49 25-102 43-158 54v48c0 83 60 153 158 187 98-34 158-104 158-187v-48c-56-11-109-29-158-54Z" fill="#FFD84F"/>
+  <path d="M432 654l68 69 111-126" stroke="#1C1C1A" stroke-width="45" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="321" cy="619" r="53" fill="#FFF3D9" stroke="#1C1C1A" stroke-width="26"/>
+  <circle cx="703" cy="619" r="53" fill="#FFF3D9" stroke="#1C1C1A" stroke-width="26"/>
+  <ellipse cx="512" cy="967" rx="199" ry="34" fill="#D9A85A" opacity=".45"/>
+</svg>

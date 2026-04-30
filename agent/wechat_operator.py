@@ -80,3 +80,21 @@ class WeChatOperator:
         end tell
         '''
         subprocess.run(["osascript", "-e", script], capture_output=True, timeout=5)
+
+    def click_first_conversation(self, window_name: str, bounds: dict):
+        """激活微信/企微并点击聊天列表里的第一条会话。"""
+        self.bring_window_to_front(window_name)
+        time.sleep(0.45)
+
+        left = int(bounds.get("x", 0))
+        top = int(bounds.get("y", 0))
+        width = int(bounds.get("width", 0))
+        height = int(bounds.get("height", 0))
+        if width <= 0 or height <= 0:
+            raise ValueError(f"invalid window bounds: {bounds}")
+
+        # 微信/企微左侧会话列表通常位于窗口左侧，第一条会话在标题栏和搜索区下方。
+        x = left + max(110, min(230, int(width * 0.18)))
+        y = top + max(105, min(155, int(height * 0.16)))
+        pyautogui.click(x, y)
+        time.sleep(0.35)

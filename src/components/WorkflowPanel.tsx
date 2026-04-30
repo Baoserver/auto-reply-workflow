@@ -38,6 +38,8 @@ interface Config {
   ocr_enabled: boolean;
   ocr_fast_mode: boolean;
   ocr_check_interval: number;
+  ocr_guard_enabled: boolean;
+  ocr_guard_previous_check_interval: number;
   ocr_chat_region_mode: 'auto' | 'fixed';
   ocr_chat_region: number[];
   ocr_trigger_keywords: string;
@@ -70,6 +72,8 @@ const DEFAULT_CONFIG: Config = {
   ocr_enabled: true,
   ocr_fast_mode: true,
   ocr_check_interval: 3,
+  ocr_guard_enabled: false,
+  ocr_guard_previous_check_interval: 3,
   ocr_chat_region_mode: 'auto',
   ocr_chat_region: [0.35, 0, 1, 1],
   ocr_trigger_keywords: '怎么,如何,能不能,请问,价格,发货,退款,投诉,订单,物流,客服,帮助,问题',
@@ -119,6 +123,8 @@ function flattenConfig(loaded: any): Config {
     ocr_enabled: loaded.ocr?.enabled ?? true,
     ocr_fast_mode: loaded.ocr?.fast_mode ?? true,
     ocr_check_interval: loaded.ocr?.check_interval || 3,
+    ocr_guard_enabled: loaded.ocr?.guard_enabled ?? false,
+    ocr_guard_previous_check_interval: loaded.ocr?.guard_previous_check_interval || 3,
     ocr_chat_region_mode: loaded.ocr?.chat_region_mode || 'auto',
     ocr_chat_region: Array.isArray(loaded.ocr?.chat_region) ? loaded.ocr.chat_region : [0.35, 0, 1, 1],
     ocr_trigger_keywords: loaded.ocr?.trigger_keywords || DEFAULT_CONFIG.ocr_trigger_keywords,
@@ -200,6 +206,25 @@ export default function WorkflowPanel() {
 
   const update = (key: keyof Config, value: any) => {
     setConfig((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const toggleGuardMode = (enabled: boolean) => {
+    setConfig((prev) => {
+      if (enabled) {
+        return {
+          ...prev,
+          ocr_guard_enabled: true,
+          ocr_guard_previous_check_interval: prev.ocr_check_interval,
+          ocr_check_interval: 60,
+        };
+      }
+
+      return {
+        ...prev,
+        ocr_guard_enabled: false,
+        ocr_check_interval: prev.ocr_guard_previous_check_interval || 3,
+      };
+    });
   };
 
   const activeOpenClawKey = config.workflow_mode === 'assistant' ? 'openclaw_assistant' : 'openclaw_customer';
@@ -310,6 +335,17 @@ export default function WorkflowPanel() {
               <input type="checkbox" checked={config.wecom_enabled}
                 onChange={(e) => update('wecom_enabled', e.target.checked)} />
               企业微信
+            </label>
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label>值守</label>
+          <div className="checkbox-group">
+            <label className="checkbox-label">
+              <input type="checkbox" checked={config.ocr_guard_enabled}
+                onChange={(e) => toggleGuardMode(e.target.checked)} />
+              {config.ocr_guard_enabled ? '已开启 — OCR 间隔固定 60 秒' : '已关闭'}
             </label>
           </div>
         </div>
