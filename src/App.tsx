@@ -347,6 +347,15 @@ export default function App() {
         setPendingReplyContent(data.content || '');
         setConfirmingReply(false);
       }
+      if (event.type === 'pending_reply_cleared') {
+        const clearedId = String(event.data?.id || '');
+        setPendingReply((current) => {
+          if (!current || current.id !== clearedId) return current;
+          setPendingReplyContent('');
+          setConfirmingReply(false);
+          return null;
+        });
+      }
     };
 
     window.electronAPI.onAgentEvent(handleEvent);

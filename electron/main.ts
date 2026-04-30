@@ -504,6 +504,10 @@ function confirmPendingReply(id: string, content: string): { ok: boolean; reason
     content,
   }) + '\n');
   mobileService?.clearPendingReply(id);
+  emitAgentEvent({
+    type: 'pending_reply_cleared',
+    data: { id, action: 'confirm' },
+  });
   return { ok: true };
 }
 
@@ -516,6 +520,10 @@ function cancelPendingReply(id: string): { ok: boolean; reason?: string } {
     }) + '\n');
   }
   mobileService?.clearPendingReply(id);
+  emitAgentEvent({
+    type: 'pending_reply_cleared',
+    data: { id, action: 'cancel' },
+  });
   return { ok: true };
 }
 

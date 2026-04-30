@@ -22,8 +22,8 @@ reply_delay_max: 3
 ocr:
   enabled: true
   fast_mode: false
-  check_interval: 60
-  guard_enabled: true
+  check_interval: 20
+  guard_enabled: false
   guard_previous_check_interval: 20
   chat_region_mode: auto
   chat_region:

@@ -132,6 +132,7 @@ function timeLabel(event: AgentEvent) {
 }
 
 function eventTitle(event: AgentEvent) {
+  if (isRouteMatchedEvent(event)) return '路由';
   if (event.type === 'reply') return 'AI 回复';
   if (event.type === 'vision') return 'Vision 识别';
   if (event.type === 'ocr') return 'OCR';
@@ -187,7 +188,6 @@ function statsForEvents(events: AgentEvent[]): Record<StatsRange, DashboardStats
   events.forEach((event) => {
     let key: keyof DashboardStats | null = null;
     if (isRouteMatchedEvent(event)) key = 'keywordHits';
-    if (event.type === 'ocr') key = 'visionRecognitions';
     if (event.type === 'vision') key = 'visionRecognitions';
     if (event.type === 'reply') key = 'aiReplies';
     if (event.type === 'escalation') key = 'escalations';
@@ -368,6 +368,15 @@ export default function App() {
             setActivePendingId(item.id);
             setPendingDraft(item.content || '');
           }
+          if (payload.event.type === 'pending_reply_cleared' && payload.event.data?.id) {
+            const clearedId = String(payload.event.data.id);
+            setPendingReplies((prev) => prev.filter((reply) => reply.id !== clearedId));
+            setActivePendingId((current) => {
+              if (current !== clearedId) return current;
+              setPendingDraft('');
+              return '';
+            });
+          }
           refreshDashboard().catch(() => {});
         }
       } catch {}
@@ -527,7 +536,7 @@ export default function App() {
   const visibleStats = mergeStats(dashboard.stats?.[range] || emptyStats, localStats[range]);
   const visibleEvents = events.filter((event) => matchesFilter(event, filter)).slice().reverse();
   const keyEvents = events.filter(isKeyHomeEvent);
-  const latestKeyEvents = keyEvents.slice(-6).reverse();
+  const latestKeyEvents = keyEvents.slice(-6);
 
   return (
     <SafeAreaView style={styles.safe}>
