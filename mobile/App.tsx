@@ -807,10 +807,26 @@ export default function App() {
 
       {tab !== 'connect' && (
         <View style={styles.actionBar}>
-          <Pressable style={[styles.actionButton, dashboard.running ? styles.actionStop : styles.actionStart]} onPress={() => controlAgent(dashboard.running ? 'stop' : 'start')} disabled={loading || !token}>
+          <Pressable
+            style={[
+              styles.actionButton,
+              dashboard.running ? styles.actionStop : styles.actionStart,
+              (loading || !token || !connected) && styles.actionDisabled,
+            ]}
+            onPress={() => controlAgent(dashboard.running ? 'stop' : 'start')}
+            disabled={loading || !token || !connected}
+          >
             <Text style={styles.actionButtonText}>{dashboard.running ? '暂停服务' : '开始识别'}</Text>
           </Pressable>
-          <Pressable style={[styles.actionButton, styles.actionSecondary]} onPress={() => controlAgent('run-once')} disabled={loading || dashboard.running || !token}>
+          <Pressable
+            style={[
+              styles.actionButton,
+              styles.actionSecondary,
+              (loading || dashboard.running || !token || !connected) && styles.actionDisabled,
+            ]}
+            onPress={() => controlAgent('run-once')}
+            disabled={loading || dashboard.running || !token || !connected}
+          >
             <Text style={styles.actionButtonText}>{loading ? '识别中' : '单次识别'}</Text>
           </Pressable>
         </View>
@@ -995,6 +1011,7 @@ const styles = StyleSheet.create({
   actionStart: { backgroundColor: '#F7D748' },
   actionStop: { backgroundColor: '#F7B6AB' },
   actionSecondary: { backgroundColor: '#FFFFFF' },
+  actionDisabled: { backgroundColor: '#D9D1C3', opacity: 0.58 },
   actionButtonText: { fontWeight: '900', color: '#171717', fontSize: 14 },
   primaryActionWide: { minHeight: 50, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#171717', borderRadius: 6, backgroundColor: '#F7D748', shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 3, height: 3 }, shadowRadius: 0 },
   primaryActionText: { fontWeight: '900', color: '#171717' },
