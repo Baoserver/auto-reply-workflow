@@ -50,6 +50,12 @@ const MAX_MAIN_WIDTH = 760;
 const MIN_LOG_WIDTH = 320;
 const MAX_LOG_WIDTH = 720;
 const STATS_STORAGE_KEY = 'vision-cs-dashboard-stats';
+const DEFAULT_OPENCLAW_CLI_PATH = '/opt/homebrew/bin/openclaw';
+const GUARD_ANIMATION_TOTAL_FRAMES = 90;
+const GUARD_OFF_LAYOUT = { right: -38, bottom: 99, size: 190 };
+const GUARD_ON_LAYOUT = { top: 128, right: -24, size: 135 };
+const GUARD_FLIGHT_ON_SIZE = 180;
+const GUARD_FLIGHT_ON_RIGHT = -32;
 const EMPTY_DASHBOARD_STATS: DashboardStats = {
   keywordHits: 0,
   visionRecognitions: 0,
@@ -58,12 +64,54 @@ const EMPTY_DASHBOARD_STATS: DashboardStats = {
 };
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+const easeInOutCubic = (value: number) => {
+  const t = clamp(value, 0, 1);
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+};
 
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const monthKey = () => todayKey().slice(0, 7);
 const yearKey = () => todayKey().slice(0, 4);
 
 const emptyStats = (): DashboardStats => ({ ...EMPTY_DASHBOARD_STATS });
+
+const normalizeOpenClawConfig = (config: any, mode: 'customer' | 'assistant') => {
+  const nested = config?.openclaw?.[mode];
+  const legacy = config || {};
+  return {
+    enabled: nested?.enabled ?? legacy.openclaw_enabled ?? false,
+    cli_path: nested?.cli_path || legacy.openclaw_cli_path || DEFAULT_OPENCLAW_CLI_PATH,
+    timeout_seconds: nested?.timeout_seconds || legacy.openclaw_timeout_seconds || 120,
+    extra_prompt: nested?.extra_prompt || legacy.openclaw_extra_prompt || '',
+    routes: Array.isArray(nested?.routes) ? nested.routes : (Array.isArray(legacy.openclaw_routes) ? legacy.openclaw_routes : []),
+  };
+};
+
+const flattenLoadedConfig = (loaded: any) => ({
+  minimax_api_key: loaded?.minimax?.api_key || '',
+  minimax_group_id: loaded?.minimax?.group_id || '',
+  minimax_vision_model: loaded?.minimax?.vision_model || 'MiniMax-VL-01',
+  minimax_text_model: loaded?.minimax?.text_model || 'MiniMax-Text-01',
+  feishu_webhook_url: loaded?.feishu?.webhook_url || '',
+  wechat_enabled: loaded?.wechat?.enabled ?? true,
+  wecom_enabled: loaded?.wecom?.enabled ?? true,
+  workflow_mode: loaded?.workflow_mode || 'customer',
+  mode: loaded?.mode || 'auto',
+  escalation_keywords: loaded?.escalation?.keywords || '退款,投诉,经理,报警',
+  max_unsolved_rounds: loaded?.escalation?.max_unsolved_rounds || 2,
+  reply_delay_min: loaded?.reply_delay_min || 1,
+  reply_delay_max: loaded?.reply_delay_max || 3,
+  ocr_enabled: loaded?.ocr?.enabled ?? true,
+  ocr_fast_mode: loaded?.ocr?.fast_mode ?? true,
+  ocr_check_interval: Number(loaded?.ocr?.check_interval) || 3,
+  ocr_guard_enabled: loaded?.ocr?.guard_enabled ?? false,
+  ocr_guard_previous_check_interval: Number(loaded?.ocr?.guard_previous_check_interval) || 3,
+  ocr_chat_region_mode: loaded?.ocr?.chat_region_mode || 'auto',
+  ocr_chat_region: Array.isArray(loaded?.ocr?.chat_region) ? loaded.ocr.chat_region : [0.35, 0, 1, 1],
+  ocr_trigger_keywords: loaded?.ocr?.trigger_keywords || '',
+  openclaw_customer: normalizeOpenClawConfig(loaded, 'customer'),
+  openclaw_assistant: normalizeOpenClawConfig(loaded, 'assistant'),
+});
 
 const normalizeStats = (value: any): DashboardStats => ({
   keywordHits: Number(value?.keywordHits) || 0,
@@ -226,6 +274,10 @@ export default function App() {
   const [pendingReply, setPendingReply] = useState<PendingReply | null>(null);
   const [pendingReplyContent, setPendingReplyContent] = useState('');
   const [confirmingReply, setConfirmingReply] = useState(false);
+  const [guardEnabled, setGuardEnabled] = useState(false);
+  const [guardSaving, setGuardSaving] = useState(false);
+  const [guardAnimation, setGuardAnimation] = useState<{ direction: 'up' | 'down'; frame: number } | null>(null);
+  const guardAnimationFrameRef = useRef<number | null>(null);
   const paneSyncRef = useRef(false);
   const paneSyncTimerRef = useRef<number | null>(null);
   const resizeRef = useRef<null | {
@@ -263,6 +315,91 @@ export default function App() {
       setRecognizingOnce(false);
     }
   }, [running, recognizingOnce]);
+
+  const refreshGuardState = useCallback(async () => {
+    try {
+      const loaded = await window.electronAPI?.loadConfig?.();
+      setGuardEnabled(Boolean(loaded?.ocr?.guard_enabled));
+    } catch {
+      setGuardEnabled(false);
+    }
+  }, []);
+
+  const stopGuardIconAnimation = useCallback(() => {
+    if (guardAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(guardAnimationFrameRef.current);
+      guardAnimationFrameRef.current = null;
+    }
+  }, []);
+
+  const runGuardIconAnimation = useCallback((direction: 'up' | 'down') => {
+    stopGuardIconAnimation();
+    return new Promise<void>((resolve) => {
+      let frame = 0;
+      setGuardAnimation({ direction, frame });
+      const tick = () => {
+        frame += 1;
+        setGuardAnimation({ direction, frame });
+        if (frame >= GUARD_ANIMATION_TOTAL_FRAMES) {
+          guardAnimationFrameRef.current = null;
+          setGuardAnimation(null);
+          resolve();
+          return;
+        }
+        guardAnimationFrameRef.current = window.requestAnimationFrame(tick);
+      };
+      guardAnimationFrameRef.current = window.requestAnimationFrame(tick);
+    });
+  }, [stopGuardIconAnimation]);
+
+  const handleToggleGuard = useCallback(async () => {
+    if (guardSaving || !window.electronAPI?.loadConfig || !window.electronAPI?.saveConfig) return;
+    const nextEnabled = !guardEnabled;
+    setGuardSaving(true);
+    const animationPromise = runGuardIconAnimation(nextEnabled ? 'up' : 'down');
+    try {
+      const loaded = await window.electronAPI.loadConfig();
+      const flat = flattenLoadedConfig(loaded || {});
+      const currentInterval = Number(flat.ocr_check_interval) || 3;
+      const nextConfig = nextEnabled
+        ? {
+            ...flat,
+            ocr_guard_enabled: true,
+            ocr_guard_previous_check_interval: currentInterval,
+            ocr_check_interval: 60,
+          }
+        : {
+            ...flat,
+            ocr_guard_enabled: false,
+            ocr_check_interval: Number(flat.ocr_guard_previous_check_interval) || 3,
+      };
+      const success = await window.electronAPI.saveConfig(nextConfig);
+      if (!success) throw new Error('保存值守设置失败');
+      await animationPromise;
+      setGuardEnabled(nextEnabled);
+    } catch (e) {
+      stopGuardIconAnimation();
+      setEvents((prev) => [...prev.slice(-100), {
+        type: 'log',
+        data: { level: 'error', message: `值守切换失败: ${e}` },
+      }]);
+      setGuardAnimation(null);
+    } finally {
+      setGuardSaving(false);
+    }
+  }, [guardEnabled, guardSaving, runGuardIconAnimation, stopGuardIconAnimation]);
+
+  useEffect(() => {
+    refreshGuardState();
+    window.addEventListener('focus', refreshGuardState);
+    document.addEventListener('visibilitychange', refreshGuardState);
+    return () => {
+      window.removeEventListener('focus', refreshGuardState);
+      document.removeEventListener('visibilitychange', refreshGuardState);
+    };
+  }, [refreshGuardState]);
+
+  useEffect(() => stopGuardIconAnimation, [stopGuardIconAnimation]);
 
   const openLogDrawer = useCallback(() => {
     setLogDrawerOpen(true);
@@ -477,6 +614,36 @@ export default function App() {
     }
   };
 
+  const guardToggleStyle = (() => {
+    if (tab !== 'home' || !guardAnimation) return undefined;
+    const appHeight = document.querySelector('.app')?.clientHeight || window.innerHeight || 740;
+    const offLayout = {
+      top: appHeight - GUARD_OFF_LAYOUT.bottom - GUARD_OFF_LAYOUT.size,
+      right: GUARD_OFF_LAYOUT.right,
+      size: GUARD_OFF_LAYOUT.size,
+    };
+    const onLayout = {
+      top: GUARD_ON_LAYOUT.top,
+      right: GUARD_FLIGHT_ON_RIGHT,
+      size: GUARD_FLIGHT_ON_SIZE,
+    };
+    const from = guardAnimation.direction === 'up' ? offLayout : onLayout;
+    const to = guardAnimation.direction === 'up' ? onLayout : offLayout;
+    const t = easeInOutCubic(guardAnimation.frame / GUARD_ANIMATION_TOTAL_FRAMES);
+    const interpolate = (start: number, end: number) => start + (end - start) * t;
+    const size = interpolate(from.size, to.size);
+    return {
+      top: `${interpolate(from.top, to.top)}px`,
+      right: `${interpolate(from.right, to.right)}px`,
+      bottom: 'auto',
+      width: `${size}px`,
+      height: `${size}px`,
+    } as React.CSSProperties;
+  })();
+  const showGuardActiveIcon = tab === 'home' && guardEnabled;
+  const showGuardFlightIcon = tab === 'home' && Boolean(guardAnimation);
+  const showGuardToggle = tab === 'home' || !guardEnabled;
+
   return (
     <div
       className={`app ${logDrawerOpen ? 'log-drawer-open' : ''} ${logDrawerOpen && logDrawerFocused ? 'log-drawer-focused' : 'log-drawer-main-focused'}`}
@@ -521,6 +688,24 @@ export default function App() {
             title="调整主页宽度"
             onMouseDown={(event) => startPaneResize('main', event)}
           />
+          <div className="asset-preload" aria-hidden="true">
+            <img src="assets/fly-bot.png" alt="" />
+            <img src="assets/sleep-bot.png" alt="" />
+            <img src="assets/bot-tubiao.png" alt="" />
+          </div>
+          {showGuardToggle && (
+            <button
+              className={`guard-toggle ${showGuardActiveIcon ? 'is-on' : 'is-off'} ${showGuardFlightIcon && guardAnimation ? `is-animating is-${guardAnimation.direction}` : ''} ${tab !== 'home' ? 'is-decorative' : ''}`}
+              style={guardToggleStyle}
+              type="button"
+              onClick={handleToggleGuard}
+              disabled={guardSaving || tab !== 'home'}
+              title={tab === 'home' ? (guardEnabled ? '关闭值守' : '开启值守') : '值守入口在首页'}
+              aria-label={tab === 'home' ? (guardEnabled ? '关闭值守' : '开启值守') : '值守入口在首页'}
+            >
+                <img src={`assets/${showGuardFlightIcon ? 'fly-bot.png' : (showGuardActiveIcon ? 'bot-tubiao.png' : 'sleep-bot.png')}`} alt="" aria-hidden="true" />
+              </button>
+          )}
           <div className="action-bar">
             <button className={`action-btn ${running ? 'stop' : 'start'}`} onClick={handleStartStop}>
               {running ? (

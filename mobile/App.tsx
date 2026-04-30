@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   FlatList,
   Image,
   Pressable,
@@ -12,11 +13,21 @@ import {
   Switch,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 
 const appLogo = require('./assets/app-logo.png');
 const guardLogo = require('./assets/bot-tubiao.png');
+const sleepGuardLogo = require('./assets/sleep-bot.png');
+const flyGuardLogo = require('./assets/fly-bot.png');
+const GUARD_ANIMATION_TOTAL_FRAMES = 90;
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+const easeInOutCubic = (value: number) => {
+  const t = clamp(value, 0, 1);
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+};
 
 type Tab = 'home' | 'logs' | 'workflow' | 'connect';
 type StatsRange = 'day' | 'month' | 'year' | 'total';
@@ -211,6 +222,7 @@ function mergeStats(primary: DashboardStats, fallback: DashboardStats): Dashboar
 }
 
 export default function App() {
+  const { height: windowHeight } = useWindowDimensions();
   const [tab, setTab] = useState<Tab>('home');
   const [serviceUrl, setServiceUrl] = useState('');
   const [token, setToken] = useState('');
@@ -228,9 +240,13 @@ export default function App() {
   const [workflowConfig, setWorkflowConfig] = useState<WorkflowConfig>(defaultWorkflowConfig);
   const [workflowLoading, setWorkflowLoading] = useState(false);
   const [workflowSaving, setWorkflowSaving] = useState(false);
+  const [guardSaving, setGuardSaving] = useState(false);
+  const [guardFlying, setGuardFlying] = useState(false);
   const [lastHeartbeatAt, setLastHeartbeatAt] = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const lastHeartbeatRef = useRef<number | null>(null);
+  const guardAnimationFrameRef = useRef<number | null>(null);
+  const guardMotion = useRef(new Animated.Value(defaultWorkflowConfig.ocr.guard_enabled ? 1 : 0)).current;
 
   const markHeartbeat = useCallback(() => {
     const now = Date.now();
@@ -300,29 +316,95 @@ export default function App() {
     setWorkflowConfig((prev) => ({ ...prev, ocr: { ...prev.ocr, ...patch } }));
   };
 
-  const toggleWorkflowGuard = (enabled: boolean) => {
-    setWorkflowConfig((prev) => {
-      if (enabled) {
-        return {
-          ...prev,
-          ocr: {
-            ...prev.ocr,
-            guard_enabled: true,
-            guard_previous_check_interval: prev.ocr.check_interval,
-            check_interval: 60,
-          },
-        };
-      }
+  const getGuardConfig = (config: WorkflowConfig, enabled: boolean): WorkflowConfig => {
+    if (enabled) {
       return {
-        ...prev,
+        ...config,
         ocr: {
-          ...prev.ocr,
-          guard_enabled: false,
-          check_interval: prev.ocr.guard_previous_check_interval || 3,
+          ...config.ocr,
+          guard_enabled: true,
+          guard_previous_check_interval: config.ocr.check_interval,
+          check_interval: 60,
         },
       };
+    }
+    return {
+      ...config,
+      ocr: {
+        ...config.ocr,
+        guard_enabled: false,
+        check_interval: config.ocr.guard_previous_check_interval || 3,
+      },
+    };
+  };
+
+  const stopGuardAnimation = () => {
+    if (guardAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(guardAnimationFrameRef.current);
+      guardAnimationFrameRef.current = null;
+    }
+  };
+
+  const runGuardAnimation = (toValue: number) => {
+    stopGuardAnimation();
+    return new Promise<void>((resolve) => {
+      let frame = 0;
+      const startValue = workflowConfig.ocr.guard_enabled ? 1 : 0;
+      const tick = () => {
+        frame += 1;
+        const t = easeInOutCubic(frame / GUARD_ANIMATION_TOTAL_FRAMES);
+        guardMotion.setValue(startValue + (toValue - startValue) * t);
+        if (frame >= GUARD_ANIMATION_TOTAL_FRAMES) {
+          guardAnimationFrameRef.current = null;
+          resolve();
+          return;
+        }
+        guardAnimationFrameRef.current = requestAnimationFrame(tick);
+      };
+      guardMotion.setValue(startValue);
+      guardAnimationFrameRef.current = requestAnimationFrame(tick);
     });
   };
+
+  const toggleGuardFromHome = async () => {
+    if (!token) {
+      Alert.alert('未连接', '请先连接桌面服务后再切换值守');
+      return;
+    }
+    if (guardSaving) return;
+    const previousConfig = workflowConfig;
+    const nextEnabled = !workflowConfig.ocr.guard_enabled;
+    const nextConfig = getGuardConfig(previousConfig, nextEnabled);
+    setGuardSaving(true);
+    setGuardFlying(true);
+    setWorkflowConfig(nextConfig);
+    const animationPromise = runGuardAnimation(nextEnabled ? 1 : 0).then(() => setGuardFlying(false));
+    try {
+      const body = await request('/api/config', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({ config: nextConfig }),
+      });
+      await animationPromise;
+      setWorkflowConfig({ ...defaultWorkflowConfig, ...(body.config || nextConfig) });
+      await refreshDashboard();
+    } catch (error) {
+      stopGuardAnimation();
+      setWorkflowConfig(previousConfig);
+      guardMotion.setValue(previousConfig.ocr.guard_enabled ? 1 : 0);
+      setGuardFlying(false);
+      Alert.alert('切换失败', String(error instanceof Error ? error.message : error));
+    } finally {
+      setGuardSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (guardSaving) return;
+    guardMotion.setValue(workflowConfig.ocr.guard_enabled ? 1 : 0);
+  }, [guardMotion, guardSaving, workflowConfig.ocr.guard_enabled]);
+
+  useEffect(() => () => stopGuardAnimation(), []);
 
   const saveWorkflowConfig = async () => {
     setWorkflowSaving(true);
@@ -537,6 +619,34 @@ export default function App() {
   const visibleEvents = events.filter((event) => matchesFilter(event, filter)).slice().reverse();
   const keyEvents = events.filter(isKeyHomeEvent);
   const latestKeyEvents = keyEvents.slice(-6);
+  const guardIconStyle = {
+    transform: [
+      {
+        translateY: guardMotion.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0, 306 - windowHeight],
+        }),
+      },
+      {
+        translateX: guardMotion.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0, 78],
+        }),
+      },
+      {
+        scale: guardMotion.interpolate({
+          inputRange: [0, 1],
+          outputRange: [1, 0.8],
+        }),
+      },
+      {
+        rotate: guardMotion.interpolate({
+          inputRange: [0, 1],
+          outputRange: ['0deg', '-6deg'],
+        }),
+      },
+    ],
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -587,8 +697,7 @@ export default function App() {
       <View style={styles.pageHost}>
       {tab === 'home' && (
         <ScrollView style={styles.scroller} contentContainerStyle={styles.content}>
-          <View style={[styles.homeHero, dashboard.running ? styles.homeHeroOn : styles.homeHeroOff, workflowConfig.ocr.guard_enabled && styles.homeHeroGuard]}>
-            {workflowConfig.ocr.guard_enabled && <Image source={guardLogo} style={styles.homeHeroGuardLogo} />}
+          <View style={[styles.homeHero, dashboard.running ? styles.homeHeroOn : styles.homeHeroOff]}>
             <View>
               <Text style={styles.homeKicker}>AUTO REPLY OPS</Text>
               <Text style={styles.homeHeroTitle}>{dashboard.running ? '托管运行中' : '等待启动'}</Text>
@@ -680,12 +789,6 @@ export default function App() {
               label="企业微信"
               value={workflowConfig.wecom.enabled}
               onValueChange={(enabled) => updateWorkflowConfig({ wecom: { enabled } })}
-            />
-            <ToggleRow
-              label="值守"
-              value={workflowConfig.ocr.guard_enabled}
-              onValueChange={toggleWorkflowGuard}
-              hint={workflowConfig.ocr.guard_enabled ? 'OCR 间隔固定 60 秒' : '开启后先点击第一条会话再识别'}
             />
           </View>
 
@@ -815,6 +918,29 @@ export default function App() {
       </View>
 
       {tab !== 'connect' && (
+        <>
+        <View style={styles.assetPreload} pointerEvents="none">
+          <Image source={flyGuardLogo} style={styles.assetPreloadImage} />
+          <Image source={sleepGuardLogo} style={styles.assetPreloadImage} />
+          <Image source={guardLogo} style={styles.assetPreloadImage} />
+        </View>
+        <Animated.View style={[styles.guardToggleWrap, guardIconStyle]}>
+          <Pressable
+            onPress={toggleGuardFromHome}
+            disabled={guardSaving}
+            hitSlop={10}
+            style={({ pressed }) => [
+              styles.guardToggle,
+              pressed && !guardSaving && styles.guardTogglePressed,
+              guardSaving && styles.guardToggleSaving,
+            ]}
+          >
+            <Image
+              source={guardFlying ? flyGuardLogo : (workflowConfig.ocr.guard_enabled ? guardLogo : sleepGuardLogo)}
+              style={styles.guardToggleImage}
+            />
+          </Pressable>
+        </Animated.View>
         <View style={styles.actionBar}>
           <Pressable
             style={[
@@ -839,6 +965,7 @@ export default function App() {
             <Text style={styles.actionButtonText}>{loading ? '识别中' : '单次识别'}</Text>
           </Pressable>
         </View>
+        </>
       )}
 
       <View style={styles.tabs}>
@@ -977,8 +1104,6 @@ const styles = StyleSheet.create({
   scroller: { flex: 1 },
   content: { padding: 14, gap: 12, paddingBottom: 18 },
   homeHero: { minHeight: 132, padding: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', borderWidth: 3, borderColor: '#171717', borderRadius: 8, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 4, height: 4 }, shadowRadius: 0, transform: [{ rotate: '-0.45deg' }] },
-  homeHeroGuard: { overflow: 'visible' },
-  homeHeroGuardLogo: { position: 'absolute', right: -28, bottom: -60, width: 126, height: 126, resizeMode: 'contain', zIndex: 10 },
   homeHeroOn: { backgroundColor: '#F7D748' },
   homeHeroOff: { backgroundColor: '#F4C7A1' },
   homeKicker: { alignSelf: 'flex-start', backgroundColor: '#171717', color: '#FFFFFF', borderRadius: 4, paddingHorizontal: 7, paddingVertical: 3, fontSize: 9, fontWeight: '900', marginBottom: 8 },
@@ -1015,7 +1140,14 @@ const styles = StyleSheet.create({
   homeBoardTitle: { fontSize: 18, fontWeight: '900', color: '#171717' },
   homeBoardCount: { backgroundColor: '#F7D748', borderWidth: 2, borderColor: '#171717', borderRadius: 4, paddingHorizontal: 7, paddingVertical: 4, fontSize: 11, fontWeight: '900', color: '#171717', overflow: 'hidden' },
   chatEmpty: { borderWidth: 2, borderColor: '#171717', borderRadius: 6, padding: 14, color: '#6B6255', fontWeight: '800', textAlign: 'center', backgroundColor: '#F7F0E4' },
-  actionBar: { flexDirection: 'row', gap: 10, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 10, borderTopWidth: 2, borderColor: '#171717', backgroundColor: '#FFFDF7' },
+  actionBar: { flexDirection: 'row', gap: 10, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 10, borderTopWidth: 2, borderColor: '#171717', backgroundColor: '#FFFDF7', overflow: 'visible' },
+  assetPreload: { position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' },
+  assetPreloadImage: { width: 1, height: 1 },
+  guardToggleWrap: { position: 'absolute', right: -46, bottom: 64, width: 188, height: 188, zIndex: 30 },
+  guardToggle: { width: 188, height: 188, alignItems: 'center', justifyContent: 'center' },
+  guardTogglePressed: { transform: [{ translateY: -2 }, { rotate: '-3deg' }] },
+  guardToggleSaving: { opacity: 0.82 },
+  guardToggleImage: { width: '100%', height: '100%', resizeMode: 'contain' },
   actionButton: { flex: 1, minHeight: 46, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#171717', borderRadius: 6, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 3, height: 3 }, shadowRadius: 0 },
   actionStart: { backgroundColor: '#F7D748' },
   actionStop: { backgroundColor: '#F7B6AB' },
