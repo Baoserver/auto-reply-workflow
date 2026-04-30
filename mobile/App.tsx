@@ -34,12 +34,23 @@ interface DashboardStats {
   escalations: number;
 }
 
+interface PendingReply {
+  id: string;
+  channel: string;
+  content: string;
+  workflow_mode?: string;
+  sender?: string;
+  source?: string;
+  ts?: string;
+}
+
 interface DashboardResponse {
   ok: boolean;
   running: boolean;
   connections: { wechat: boolean; wecom: boolean };
   stats: Record<StatsRange, DashboardStats>;
   latestEvents: AgentEvent[];
+  pendingReplies?: PendingReply[];
 }
 
 const STORAGE_KEYS = {
@@ -65,6 +76,7 @@ const defaultDashboard: DashboardResponse = {
     total: emptyStats,
   },
   latestEvents: [],
+  pendingReplies: [],
 };
 
 function normalizeBaseUrl(value: string) {
@@ -175,6 +187,10 @@ export default function App() {
   const [filter, setFilter] = useState<LogFilter>('all');
   const [loading, setLoading] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [pendingReplies, setPendingReplies] = useState<PendingReply[]>([]);
+  const [activePendingId, setActivePendingId] = useState('');
+  const [pendingDraft, setPendingDraft] = useState('');
+  const [pendingSubmitting, setPendingSubmitting] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   const authedHeaders = useMemo(() => ({
@@ -200,6 +216,7 @@ export default function App() {
     if (!serviceUrl || !token) return;
     const body = await request('/api/dashboard', { headers: authedHeaders });
     setDashboard(body);
+    setPendingReplies(Array.isArray(body.pendingReplies) ? body.pendingReplies : []);
     if (Array.isArray(body.latestEvents) && body.latestEvents.length > 0) {
       setEvents((prev) => {
         const seen = new Set(prev.map((event) => event.id || `${event.ts}-${event.type}-${eventBody(event)}`));
@@ -229,6 +246,15 @@ export default function App() {
         const payload = JSON.parse(String(message.data));
         if (payload.type === 'event' && payload.event) {
           setEvents((prev) => [...prev.slice(-99), payload.event]);
+          if (payload.event.type === 'pending_reply' && payload.event.data?.id) {
+            const item = payload.event.data as PendingReply;
+            setPendingReplies((prev) => {
+              const withoutSame = prev.filter((reply) => reply.id !== item.id);
+              return [...withoutSame, item].slice(-10);
+            });
+            setActivePendingId(item.id);
+            setPendingDraft(item.content || '');
+          }
           refreshDashboard().catch(() => {});
         }
       } catch {}
@@ -308,6 +334,67 @@ export default function App() {
     await AsyncStorage.removeItem(STORAGE_KEYS.token);
   };
 
+  useEffect(() => {
+    if (pendingReplies.length === 0) {
+      setActivePendingId('');
+      setPendingDraft('');
+      return;
+    }
+    const current = pendingReplies.find((reply) => reply.id === activePendingId);
+    if (current) return;
+    const latest = pendingReplies[pendingReplies.length - 1];
+    setActivePendingId(latest.id);
+    setPendingDraft(latest.content || '');
+  }, [activePendingId, pendingReplies]);
+
+  const activePendingReply = pendingReplies.find((reply) => reply.id === activePendingId) || pendingReplies[0] || null;
+
+  const removePendingReply = useCallback((id: string) => {
+    setPendingReplies((prev) => prev.filter((reply) => reply.id !== id));
+    if (activePendingId === id) {
+      setActivePendingId('');
+      setPendingDraft('');
+    }
+  }, [activePendingId]);
+
+  const confirmPendingReply = async () => {
+    if (!activePendingReply || !pendingDraft.trim() || pendingSubmitting) return;
+    setPendingSubmitting(true);
+    try {
+      await request(`/api/pending-replies/${encodeURIComponent(activePendingReply.id)}/confirm`, {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({ content: pendingDraft.trim() }),
+      });
+      removePendingReply(activePendingReply.id);
+      await refreshDashboard();
+      await refreshEvents();
+      Alert.alert('已发送', '待发送信息已由桌面端发送');
+    } catch (error) {
+      Alert.alert('发送失败', String(error instanceof Error ? error.message : error));
+    } finally {
+      setPendingSubmitting(false);
+    }
+  };
+
+  const cancelPendingReply = async () => {
+    if (!activePendingReply || pendingSubmitting) return;
+    setPendingSubmitting(true);
+    try {
+      await request(`/api/pending-replies/${encodeURIComponent(activePendingReply.id)}/cancel`, {
+        method: 'POST',
+        headers: authedHeaders,
+      });
+      removePendingReply(activePendingReply.id);
+      await refreshDashboard();
+      Alert.alert('已取消', '这条待发送信息已丢弃');
+    } catch (error) {
+      Alert.alert('取消失败', String(error instanceof Error ? error.message : error));
+    } finally {
+      setPendingSubmitting(false);
+    }
+  };
+
   const localStats = useMemo(() => statsForEvents(events), [events]);
   const visibleStats = mergeStats(dashboard.stats?.[range] || emptyStats, localStats[range]);
   const visibleEvents = events.filter((event) => matchesFilter(event, filter)).slice().reverse();
@@ -325,6 +412,40 @@ export default function App() {
           <Text style={styles.statusText}>{connected ? 'ONLINE' : 'OFFLINE'}</Text>
         </View>
       </View>
+
+      {activePendingReply && (
+        <View style={styles.pendingCard}>
+          <View style={styles.pendingHeader}>
+            <View>
+              <Text style={styles.pendingKicker}>待发送信息</Text>
+              <Text style={styles.pendingTitle}>{activePendingReply.workflow_mode === 'assistant' ? '助手模式' : '客服模式'}</Text>
+            </View>
+            <Text style={styles.pendingBadge}>{pendingReplies.length} 条</Text>
+          </View>
+          <Text style={styles.pendingMeta}>
+            {(activePendingReply.channel || '企业微信')} · {(activePendingReply.sender || activePendingReply.source || 'AI 回复')}
+          </Text>
+          <TextInput
+            value={pendingDraft}
+            onChangeText={setPendingDraft}
+            multiline
+            textAlignVertical="top"
+            style={styles.pendingInput}
+          />
+          <View style={styles.pendingActions}>
+            <Pressable style={[styles.pendingButton, styles.pendingCancel]} onPress={cancelPendingReply} disabled={pendingSubmitting}>
+              <Text style={styles.pendingButtonText}>取消</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.pendingButton, styles.pendingConfirm, (!pendingDraft.trim() || pendingSubmitting) && styles.pendingDisabled]}
+              onPress={confirmPendingReply}
+              disabled={!pendingDraft.trim() || pendingSubmitting}
+            >
+              <Text style={styles.pendingButtonText}>{pendingSubmitting ? '处理中' : '确认发送'}</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
 
       <View style={styles.pageHost}>
       {tab === 'home' && (
@@ -544,6 +665,19 @@ const styles = StyleSheet.create({
   online: { backgroundColor: '#C6F6D5' },
   offline: { backgroundColor: '#F3E7D3' },
   statusText: { fontSize: 11, fontWeight: '900', color: '#171717' },
+  pendingCard: { margin: 12, marginBottom: 8, padding: 12, backgroundColor: '#FFFDF7', borderWidth: 3, borderColor: '#171717', borderRadius: 8, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 4, height: 4 }, shadowRadius: 0, gap: 8 },
+  pendingHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 },
+  pendingKicker: { fontSize: 10, fontWeight: '900', color: '#7B715F' },
+  pendingTitle: { fontSize: 20, lineHeight: 23, fontWeight: '900', color: '#171717' },
+  pendingBadge: { paddingHorizontal: 8, paddingVertical: 4, backgroundColor: '#F7D748', borderWidth: 2, borderColor: '#171717', borderRadius: 4, overflow: 'hidden', fontSize: 11, fontWeight: '900', color: '#171717' },
+  pendingMeta: { fontSize: 11, lineHeight: 15, fontWeight: '900', color: '#5F5747' },
+  pendingInput: { minHeight: 104, maxHeight: 170, padding: 10, backgroundColor: '#EFE7D8', borderWidth: 3, borderColor: '#171717', borderRadius: 6, color: '#171717', fontWeight: '800', lineHeight: 19 },
+  pendingActions: { flexDirection: 'row', gap: 10 },
+  pendingButton: { flex: 1, minHeight: 42, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#171717', borderRadius: 6, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 2, height: 2 }, shadowRadius: 0 },
+  pendingCancel: { backgroundColor: '#FFFFFF' },
+  pendingConfirm: { backgroundColor: '#C9F2D1' },
+  pendingDisabled: { opacity: 0.52 },
+  pendingButtonText: { fontWeight: '900', color: '#171717', fontSize: 13 },
   pageHost: { flex: 1, minHeight: 0 },
   scroller: { flex: 1 },
   content: { padding: 14, gap: 12, paddingBottom: 18 },

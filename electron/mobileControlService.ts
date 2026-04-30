@@ -25,6 +25,16 @@ export interface DashboardStatsStore {
   total: DashboardStats;
 }
 
+export interface PendingReply {
+  id: string;
+  channel: string;
+  content: string;
+  workflow_mode?: string;
+  sender?: string;
+  source?: string;
+  ts?: string;
+}
+
 interface StoredToken {
   id: string;
   hash: string;
@@ -46,6 +56,8 @@ export interface MobileControlServiceOptions {
   startAgent: () => void;
   stopAgent: () => void;
   runAgentOnce: () => Promise<{ ok: boolean; reason?: string }>;
+  confirmPendingReply: (id: string, content: string) => Promise<{ ok: boolean; reason?: string }> | { ok: boolean; reason?: string };
+  cancelPendingReply: (id: string) => Promise<{ ok: boolean; reason?: string }> | { ok: boolean; reason?: string };
   checkProcess: (name: string) => Promise<boolean>;
 }
 
@@ -416,6 +428,7 @@ export class MobileControlService {
   private clients = new Set<any>();
   private eventStore: EventStore;
   private pairing: PairingManager;
+  private pendingReplies = new Map<string, PendingReply>();
 
   public port: number;
 
@@ -468,6 +481,17 @@ export class MobileControlService {
 
   ingestAgentEvent(event: AgentEvent) {
     const stored = this.eventStore.addEvent(event);
+    if (stored.type === 'pending_reply' && stored.data?.id) {
+      this.pendingReplies.set(String(stored.data.id), {
+        id: String(stored.data.id),
+        channel: String(stored.data.channel || ''),
+        content: String(stored.data.content || ''),
+        workflow_mode: stored.data.workflow_mode,
+        sender: stored.data.sender,
+        source: stored.data.source,
+        ts: stored.ts,
+      });
+    }
     const payload = JSON.stringify({ type: 'event', event: stored });
     for (const client of this.clients) {
       try {
@@ -477,6 +501,14 @@ export class MobileControlService {
       }
     }
     return stored;
+  }
+
+  clearPendingReply(id: string) {
+    this.pendingReplies.delete(id);
+  }
+
+  listPendingReplies() {
+    return Array.from(this.pendingReplies.values());
   }
 
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
@@ -558,6 +590,7 @@ export class MobileControlService {
           wecom: eventConnections.wecom ?? wecom,
         },
         stats: mergeStatsStore(this.eventStore.stats(), desktopStats),
+        pendingReplies: this.listPendingReplies(),
         latestEvents: events.filter((event) => (
           event.type === 'vision' ||
           event.type === 'reply' ||
@@ -565,6 +598,38 @@ export class MobileControlService {
           isRouteMatchedEvent(event)
         )).slice(-6),
       });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/pending-replies') {
+      sendJson(res, 200, {
+        ok: true,
+        pendingReplies: this.listPendingReplies(),
+      });
+      return;
+    }
+
+    const pendingConfirmMatch = /^\/api\/pending-replies\/([^/]+)\/confirm$/.exec(url.pathname);
+    if (req.method === 'POST' && pendingConfirmMatch) {
+      const id = decodeURIComponent(pendingConfirmMatch[1]);
+      const body = await readBody(req);
+      const content = String(body.content || '').trim();
+      if (!content) {
+        sendJson(res, 400, { ok: false, error: 'content is required' });
+        return;
+      }
+      const result = await this.options.confirmPendingReply(id, content);
+      if (result.ok) this.clearPendingReply(id);
+      sendJson(res, result.ok ? 200 : 409, { ok: result.ok, reason: result.reason });
+      return;
+    }
+
+    const pendingCancelMatch = /^\/api\/pending-replies\/([^/]+)\/cancel$/.exec(url.pathname);
+    if (req.method === 'POST' && pendingCancelMatch) {
+      const id = decodeURIComponent(pendingCancelMatch[1]);
+      const result = await this.options.cancelPendingReply(id);
+      if (result.ok) this.clearPendingReply(id);
+      sendJson(res, result.ok ? 200 : 409, { ok: result.ok, reason: result.reason });
       return;
     }
 

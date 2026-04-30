@@ -34,6 +34,15 @@ interface DashboardStatsStore {
   total: DashboardStats;
 }
 
+interface PendingReply {
+  id: string;
+  channel: string;
+  content: string;
+  workflow_mode?: string;
+  sender?: string;
+  source?: string;
+}
+
 const DEFAULT_MAIN_WIDTH = 430;
 const DEFAULT_LOG_WIDTH = 390;
 const MIN_MAIN_WIDTH = 375;
@@ -214,6 +223,9 @@ export default function App() {
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [stats, setStats] = useState<DashboardStatsStore>(() => loadDashboardStats());
   const [connections, setConnections] = useState<Connection>({ wechat: false, wecom: false });
+  const [pendingReply, setPendingReply] = useState<PendingReply | null>(null);
+  const [pendingReplyContent, setPendingReplyContent] = useState('');
+  const [confirmingReply, setConfirmingReply] = useState(false);
   const paneSyncRef = useRef(false);
   const paneSyncTimerRef = useRef<number | null>(null);
   const resizeRef = useRef<null | {
@@ -275,6 +287,49 @@ export default function App() {
     document.body.classList.add('pane-resizing');
   }, [mainWidth, logWidth]);
 
+  const closePendingReply = useCallback(() => {
+    setPendingReply(null);
+    setPendingReplyContent('');
+    setConfirmingReply(false);
+  }, []);
+
+  const handleConfirmPendingReply = useCallback(async () => {
+    if (!pendingReply || !pendingReplyContent.trim() || confirmingReply) return;
+    setConfirmingReply(true);
+    try {
+      const result = await window.electronAPI?.confirmPendingReply?.(pendingReply.id, pendingReplyContent.trim());
+      if (result?.ok) {
+        closePendingReply();
+      } else {
+        setEvents((prev) => [...prev.slice(-100), {
+          type: 'log',
+          data: {
+            level: 'warn',
+            message: result?.reason || '确认发送不可用，请确认持续识别进程正在运行',
+          },
+        }]);
+        setConfirmingReply(false);
+      }
+    } catch (e) {
+      setEvents((prev) => [...prev.slice(-100), {
+        type: 'log',
+        data: { level: 'error', message: `确认发送异常: ${e}` },
+      }]);
+      setConfirmingReply(false);
+    }
+  }, [closePendingReply, confirmingReply, pendingReply, pendingReplyContent]);
+
+  const handleCancelPendingReply = useCallback(async () => {
+    if (pendingReply?.id) {
+      await window.electronAPI?.cancelPendingReply?.(pendingReply.id);
+      setEvents((prev) => [...prev.slice(-100), {
+        type: 'log',
+        data: { level: 'info', message: '已取消待发送信息' },
+      }]);
+    }
+    closePendingReply();
+  }, [closePendingReply, pendingReply]);
+
   useEffect(() => {
     if (!window.electronAPI) return;
 
@@ -285,6 +340,12 @@ export default function App() {
 
       if (event.type === 'status') {
         setRunning(event.data.state === 'running');
+      }
+      if (event.type === 'pending_reply') {
+        const data = event.data as PendingReply;
+        setPendingReply(data);
+        setPendingReplyContent(data.content || '');
+        setConfirmingReply(false);
       }
     };
 
@@ -525,6 +586,46 @@ export default function App() {
                 </div>
                 <ChatMonitor events={events} />
               </aside>
+            </div>
+          )}
+
+          {pendingReply && (
+            <div className="pending-reply-layer" role="presentation">
+              <section className="pending-reply-modal" role="dialog" aria-modal="true" aria-label="待发送信息">
+                <div className="pending-reply-header">
+                  <div>
+                    <span className="pending-reply-kicker">待发送信息</span>
+                    <strong>{pendingReply.workflow_mode === 'assistant' ? '助手模式' : '客服模式'}</strong>
+                  </div>
+                  <button className="pending-reply-icon-btn" aria-label="取消发送" onClick={handleCancelPendingReply}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+                      <path d="M18 6L6 18"/>
+                      <path d="M6 6l12 12"/>
+                    </svg>
+                  </button>
+                </div>
+                <div className="pending-reply-meta">
+                  <span>{pendingReply.channel || '企业微信'}</span>
+                  <span>{pendingReply.sender || pendingReply.source || 'AI 回复'}</span>
+                </div>
+                <textarea
+                  value={pendingReplyContent}
+                  onChange={(event) => setPendingReplyContent(event.target.value)}
+                  autoFocus
+                />
+                <div className="pending-reply-actions">
+                  <button className="pending-reply-btn secondary" onClick={handleCancelPendingReply}>
+                    取消
+                  </button>
+                  <button
+                    className="pending-reply-btn primary"
+                    onClick={handleConfirmPendingReply}
+                    disabled={!pendingReplyContent.trim() || confirmingReply}
+                  >
+                    {confirmingReply ? '发送中' : '确认发送'}
+                  </button>
+                </div>
+              </section>
             </div>
           )}
         </>

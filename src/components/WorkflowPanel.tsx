@@ -322,15 +322,16 @@ export default function WorkflowPanel() {
           </select>
         </div>
 
+        <div className="form-group">
+          <label>回复模式</label>
+          <select value={config.mode} onChange={(e) => update('mode', e.target.value)}>
+            <option value="assist">辅助模式 — AI 生成建议，人工确认发送</option>
+            <option value="auto">托管模式 — AI 自动回复</option>
+          </select>
+        </div>
+
         {config.workflow_mode === 'customer' && (
           <>
-            <div className="form-group">
-              <label>回复模式</label>
-              <select value={config.mode} onChange={(e) => update('mode', e.target.value)}>
-                <option value="assist">辅助模式 — AI 生成建议，人工确认发送</option>
-                <option value="auto">托管模式 — AI 自动回复</option>
-              </select>
-            </div>
             <div className="form-group">
               <label>升级关键词（逗号分隔）</label>
               <input value={config.escalation_keywords}

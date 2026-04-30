@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startMobilePairing: () => ipcRenderer.invoke('mobile-pair-start'),
   getMobileServiceInfo: () => ipcRenderer.invoke('mobile-service-info'),
   sendCommand: (cmd: string) => ipcRenderer.send('agent-command', cmd),
+  confirmPendingReply: (id: string, content: string) =>
+    ipcRenderer.invoke('confirm-pending-reply', id, content),
+  cancelPendingReply: (id: string) => ipcRenderer.invoke('cancel-pending-reply', id),
   loadConfig: () => ipcRenderer.invoke('load-config'),
   saveConfig: (config: any) => ipcRenderer.invoke('save-config', config),
   listKnowledgeFiles: () => ipcRenderer.invoke('list-knowledge-files'),

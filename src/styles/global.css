@@ -1218,6 +1218,147 @@ body.pane-resizing .pane-resize-handle::after {
   max-width: 100%;
 }
 
+/* ========================================
+   Pending Reply Modal
+   ======================================== */
+.pending-reply-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: end center;
+  padding: 18px 16px 118px;
+  background: rgba(23, 23, 23, 0.22);
+}
+
+.pending-reply-modal {
+  width: min(100%, 392px);
+  max-height: min(72vh, 560px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  background: var(--surface);
+  border: 4px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+}
+
+.pending-reply-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pending-reply-header strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--text);
+}
+
+.pending-reply-kicker {
+  display: block;
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--text-dim);
+}
+
+.pending-reply-icon-btn {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  background: var(--yellow);
+  color: var(--text);
+  border: 3px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 2px 2px 0 var(--border);
+  cursor: pointer;
+}
+
+.pending-reply-icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.pending-reply-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pending-reply-meta span {
+  max-width: 100%;
+  padding: 5px 8px;
+  background: var(--accent-dim);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pending-reply-modal textarea {
+  width: 100%;
+  min-height: 180px;
+  max-height: 300px;
+  resize: vertical;
+  padding: 12px;
+  background: var(--surface-secondary);
+  border: 3px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 3px 3px 0 var(--border);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.45;
+  outline: none;
+}
+
+.pending-reply-modal textarea:focus {
+  background: var(--yellow-dim);
+  box-shadow: 5px 5px 0 var(--border);
+}
+
+.pending-reply-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.35fr;
+  gap: 10px;
+}
+
+.pending-reply-btn {
+  min-height: 46px;
+  border: 3px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 3px 3px 0 var(--border);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.pending-reply-btn.secondary {
+  background: var(--surface-secondary);
+}
+
+.pending-reply-btn.primary {
+  background: var(--green-dim);
+}
+
+.pending-reply-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.54;
+  transform: none;
+  box-shadow: 2px 2px 0 var(--border);
+}
+
 @keyframes logDrawerOut {
   from {
     transform: translateX(-18px);

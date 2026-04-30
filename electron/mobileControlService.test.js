@@ -83,6 +83,8 @@ test('MobileControlService rejects unauthenticated control requests and accepts 
     startAgent: () => { started += 1; },
     stopAgent: () => {},
     runAgentOnce: async () => ({ ok: true }),
+    confirmPendingReply: async () => ({ ok: true }),
+    cancelPendingReply: async () => ({ ok: true }),
     checkProcess: async () => false,
     appVersion: '0.1.0',
   });

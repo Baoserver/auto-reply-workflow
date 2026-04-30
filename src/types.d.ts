@@ -8,6 +8,8 @@ interface ElectronAPI {
   startMobilePairing: () => Promise<{ code: string; expiresAt: string } | null>;
   getMobileServiceInfo: () => Promise<{ running: boolean; port: number | null }>;
   sendCommand: (cmd: string) => void;
+  confirmPendingReply: (id: string, content: string) => Promise<{ ok: boolean; reason?: string }>;
+  cancelPendingReply: (id: string) => Promise<{ ok: boolean; reason?: string }>;
   loadConfig: () => Promise<any>;
   saveConfig: (config: any) => Promise<boolean>;
   listKnowledgeFiles: () => Promise<any[]>;

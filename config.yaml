@@ -13,7 +13,7 @@ wecom:
   enabled: true
   window_title: 企业微信
 workflow_mode: assistant
-mode: auto
+mode: assist
 escalation:
   keywords: 转人工
   max_unsolved_rounds: 5

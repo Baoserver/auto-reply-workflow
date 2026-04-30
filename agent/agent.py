@@ -6,6 +6,8 @@ import time
 import threading
 import signal
 import argparse
+import uuid
+import select
 from pathlib import Path
 import pyautogui
 
@@ -44,6 +46,7 @@ class Agent:
         self.capture = ScreenCapture()
         self.operator = WeChatOperator()
         self.conversation_rounds = {}
+        self.pending_replies = {}
         self._build_runtime()
 
     def _build_runtime(self):
@@ -73,6 +76,35 @@ class Agent:
             self.detector.check_once(self._on_new_message, self._on_assistant_workflow, self._on_customer_escalation)
         finally:
             self.running = False
+        if self.pending_replies:
+            self.wait_for_pending_replies(timeout_seconds=600)
+
+    def wait_for_pending_replies(self, timeout_seconds: int = 600):
+        deadline = time.time() + timeout_seconds
+        emit("log", {
+            "level": "info",
+            "message": f"单次识别存在待确认回复，等待确认或取消，最多 {timeout_seconds}s",
+        })
+        while self.pending_replies and time.time() < deadline:
+            readable, _, _ = select.select([sys.stdin], [], [], 0.5)
+            if not readable:
+                continue
+            line = sys.stdin.readline()
+            if not line:
+                break
+            try:
+                cmd = json.loads(line.strip())
+            except json.JSONDecodeError:
+                continue
+            action = cmd.get("action")
+            if action == "confirm_pending_reply":
+                self.confirm_pending_reply(cmd.get("id", ""), cmd.get("content"))
+            elif action == "cancel_pending_reply":
+                self.cancel_pending_reply(cmd.get("id", ""))
+        if self.pending_replies:
+            pending_count = len(self.pending_replies)
+            self.pending_replies.clear()
+            emit("log", {"level": "warn", "message": f"单次识别待确认回复超时，已丢弃 {pending_count} 条"})
 
     def reload_config(self):
         was_running = self.running
@@ -122,10 +154,9 @@ class Agent:
         if reply is None:
             reply = "您好，请问有什么可以帮助您的？"
 
-        emit("reply", {"content": reply})
-
         mode = self.config.get("mode", "auto")
         if mode == "auto":
+            emit("reply", {"content": reply, "workflow_mode": "customer"})
             delay_min = self.config.get("reply_delay_min", 1)
             delay_max = self.config.get("reply_delay_max", 3)
             import random
@@ -134,6 +165,15 @@ class Agent:
                 self.operator.type_and_send(reply, window_name=channel)
             except Exception as e:
                 print(f"[Agent] send error: {e}", flush=True)
+                emit("log", {"level": "error", "message": f"客服模式发送失败: {e}"})
+        else:
+            self._queue_pending_reply(
+                channel=channel,
+                content=reply,
+                workflow_mode="customer",
+                sender=sender,
+                source="客服模式",
+            )
 
     def _generate_customer_reply(self, content: str, channel: str, sender: str, context: str, vision_result: dict | None) -> str | None:
         route_data = (vision_result or {}).get("customer_openclaw_route")
@@ -225,6 +265,17 @@ class Agent:
             })
             return False
 
+        mode = self.config.get("mode", "auto")
+        if mode != "auto":
+            self._queue_pending_reply(
+                channel=channel,
+                content=reply,
+                workflow_mode="assistant",
+                sender="助手模式",
+                source=route.agent_name or route.agent_id,
+            )
+            return True
+
         emit("reply", {"content": reply, "workflow_mode": "assistant"})
 
         try:
@@ -238,6 +289,65 @@ class Agent:
             print(f"[Agent] assistant send error: {e}", flush=True)
             emit("log", {"level": "error", "message": f"助手模式发送失败: {e}"})
             return False
+
+    def _queue_pending_reply(self, channel: str, content: str, workflow_mode: str, sender: str = "", source: str = "") -> str:
+        reply_id = uuid.uuid4().hex
+        item = {
+            "id": reply_id,
+            "channel": channel,
+            "content": content,
+            "workflow_mode": workflow_mode,
+            "sender": sender or "未知",
+            "source": source or workflow_mode,
+        }
+        self.pending_replies[reply_id] = item
+        emit("pending_reply", item)
+        emit("log", {
+            "level": "info",
+            "message": f"{'助手模式' if workflow_mode == 'assistant' else '客服模式'}辅助模式待确认发送，id={reply_id[:8]}",
+        })
+        return reply_id
+
+    def confirm_pending_reply(self, reply_id: str, content: str | None = None) -> bool:
+        item = self.pending_replies.pop(reply_id, None)
+        if not item:
+            emit("log", {"level": "warn", "message": f"待发送信息不存在或已过期: {reply_id}"})
+            return False
+
+        final_content = (content if content is not None else item.get("content") or "").strip()
+        if not final_content:
+            emit("log", {"level": "warn", "message": "待发送信息为空，已取消发送"})
+            return False
+
+        channel = item.get("channel") or "企业微信"
+        workflow_mode = item.get("workflow_mode") or "customer"
+        try:
+            self.operator.type_and_send(final_content, window_name=channel)
+            emit("reply", {
+                "content": final_content,
+                "workflow_mode": workflow_mode,
+                "confirmed": True,
+            })
+            emit("log", {
+                "level": "info",
+                "message": f"已确认发送辅助回复，channel={channel}，mode={workflow_mode}",
+            })
+            return True
+        except Exception as e:
+            print(f"[Agent] confirm send error: {e}", flush=True)
+            emit("log", {"level": "error", "message": f"确认发送失败: {e}"})
+            return False
+
+    def cancel_pending_reply(self, reply_id: str) -> bool:
+        item = self.pending_replies.pop(reply_id, None)
+        if item:
+            emit("log", {
+                "level": "info",
+                "message": f"已取消辅助回复，id={reply_id[:8]}，mode={item.get('workflow_mode')}",
+            })
+            return True
+        emit("log", {"level": "warn", "message": f"待发送信息不存在或已取消: {reply_id}"})
+        return False
 
     def _format_conversation_context(self, vision_result: dict | None) -> str:
         if not vision_result:
@@ -290,6 +400,10 @@ def main():
                     agent.stop()
                 elif action == "reload_config":
                     agent.reload_config()
+                elif action == "confirm_pending_reply":
+                    agent.confirm_pending_reply(cmd.get("id", ""), cmd.get("content"))
+                elif action == "cancel_pending_reply":
+                    agent.cancel_pending_reply(cmd.get("id", ""))
             except (json.JSONDecodeError, KeyError):
                 pass
 

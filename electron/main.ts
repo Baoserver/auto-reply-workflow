@@ -471,7 +471,7 @@ function runAgentOnce(): Promise<{ ok: boolean; reason?: string }> {
   return new Promise((resolve) => {
     try {
       agentOnceProcess = spawn(pythonPath, [agentPath, '--once'], {
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
       log(`agent once spawn succeeded, pid: ${agentOnceProcess.pid}`);
     } catch (err) {
@@ -491,6 +491,32 @@ function runAgentOnce(): Promise<{ ok: boolean; reason?: string }> {
   });
 }
 
+function confirmPendingReply(id: string, content: string): { ok: boolean; reason?: string } {
+  const targetProcess = agentProcess?.stdin?.writable ? agentProcess : agentOnceProcess;
+  if (!targetProcess?.stdin?.writable) {
+    return { ok: false, reason: '待确认回复已过期，请重新识别一次' };
+  }
+  targetProcess.stdin.write(JSON.stringify({
+    action: 'confirm_pending_reply',
+    id,
+    content,
+  }) + '\n');
+  mobileService?.clearPendingReply(id);
+  return { ok: true };
+}
+
+function cancelPendingReply(id: string): { ok: boolean; reason?: string } {
+  const targetProcess = agentProcess?.stdin?.writable ? agentProcess : agentOnceProcess;
+  if (targetProcess?.stdin?.writable) {
+    targetProcess.stdin.write(JSON.stringify({
+      action: 'cancel_pending_reply',
+      id,
+    }) + '\n');
+  }
+  mobileService?.clearPendingReply(id);
+  return { ok: true };
+}
+
 // --- IPC 处理 ---
 
 ipcMain.on('agent-start', () => {
@@ -500,6 +526,12 @@ ipcMain.on('agent-start', () => {
 ipcMain.on('agent-stop', () => stopAgent());
 ipcMain.on('agent-command', (_e, cmd: string) => {
   agentProcess?.stdin?.write(JSON.stringify({ action: cmd }) + '\n');
+});
+ipcMain.handle('confirm-pending-reply', (_e, id: string, content: string) => {
+  return confirmPendingReply(id, content);
+});
+ipcMain.handle('cancel-pending-reply', (_e, id: string) => {
+  return cancelPendingReply(id);
 });
 ipcMain.handle('agent-run-once', () => runAgentOnce());
 ipcMain.handle('mobile-pair-start', () => mobileService?.startPairing() || null);
@@ -706,6 +738,8 @@ app.whenReady().then(() => {
     startAgent,
     stopAgent,
     runAgentOnce,
+    confirmPendingReply,
+    cancelPendingReply,
     checkProcess: async (name: string) => isProcessRunning(name),
   });
   mobileService.start()
