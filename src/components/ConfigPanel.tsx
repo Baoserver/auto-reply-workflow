@@ -33,6 +33,8 @@ interface Config {
   ocr_enabled: boolean;
   ocr_fast_mode: boolean;
   ocr_check_interval: number;
+  ocr_guard_enabled: boolean;
+  ocr_guard_previous_check_interval: number;
   ocr_chat_region_mode: 'auto' | 'fixed';
   ocr_chat_region: number[];
   ocr_trigger_keywords: string;
@@ -65,6 +67,8 @@ const DEFAULT_CONFIG: Config = {
   ocr_enabled: true,
   ocr_fast_mode: true,
   ocr_check_interval: 3,
+  ocr_guard_enabled: false,
+  ocr_guard_previous_check_interval: 3,
   ocr_chat_region_mode: 'auto',
   ocr_chat_region: [0.35, 0, 1, 1],
   ocr_trigger_keywords: '怎么,如何,能不能,请问,价格,发货,退款,投诉,订单,物流,客服,帮助,问题',
@@ -137,6 +141,8 @@ export default function ConfigPanel() {
             ocr_enabled: loaded.ocr?.enabled ?? true,
             ocr_fast_mode: loaded.ocr?.fast_mode ?? true,
             ocr_check_interval: loaded.ocr?.check_interval || 3,
+            ocr_guard_enabled: loaded.ocr?.guard_enabled ?? false,
+            ocr_guard_previous_check_interval: loaded.ocr?.guard_previous_check_interval || 3,
             ocr_chat_region_mode: loaded.ocr?.chat_region_mode || 'auto',
             ocr_chat_region: Array.isArray(loaded.ocr?.chat_region) ? loaded.ocr.chat_region : [0.35, 0, 1, 1],
             ocr_trigger_keywords: loaded.ocr?.trigger_keywords || DEFAULT_CONFIG.ocr_trigger_keywords,
@@ -289,8 +295,14 @@ export default function ConfigPanel() {
         </div>
         <div className="form-group">
           <label>检测间隔（秒）</label>
-          <input type="number" value={config.ocr_check_interval} min={1} max={10}
+          <input type="number" value={config.ocr_guard_enabled ? 60 : config.ocr_check_interval} min={1} max={config.ocr_guard_enabled ? 60 : 10}
+            disabled={config.ocr_guard_enabled}
             onChange={(e) => update('ocr_check_interval', parseInt(e.target.value) || 3)} />
+          {config.ocr_guard_enabled && (
+            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>
+              值守已开启，检测间隔固定为 60 秒
+            </div>
+          )}
         </div>
         <div className="form-group">
           <label>触发关键词（逗号分隔）</label>

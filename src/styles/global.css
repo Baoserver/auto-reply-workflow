@@ -218,6 +218,8 @@ select:focus-visible {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: stretch;
+  position: relative;
+  min-height: 118px;
   background: var(--yellow);
   border: 3px solid var(--border);
   border-radius: var(--radius-lg);
@@ -228,6 +230,36 @@ select:focus-visible {
 
 .home-hero.is-paused {
   background: var(--orange-dim);
+}
+
+.home-hero.is-guard {
+  padding: 12px;
+  background: #f8dfc1;
+  overflow: visible;
+  z-index: 3;
+}
+
+.home-hero-copy {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+
+.home-hero-robot {
+  position: absolute;
+  z-index: 20;
+  right: -38px;
+  bottom: -61px;
+  width: 128px;
+  height: 128px;
+  object-fit: contain;
+  pointer-events: none;
+  transform: none;
+}
+
+.home-hero.is-guard h1,
+.home-hero.is-guard p {
+  max-width: 100%;
 }
 
 .home-kicker {
@@ -265,6 +297,8 @@ select:focus-visible {
   align-items: center;
   justify-content: center;
   align-self: start;
+  position: relative;
+  z-index: 1;
   background: var(--surface);
   border: 3px solid var(--border);
   border-radius: var(--radius);
@@ -286,6 +320,8 @@ select:focus-visible {
   grid-template-areas:
     "stats channel";
   gap: 10px;
+  position: relative;
+  z-index: 1;
 }
 
 .home-stat-grid {
@@ -1414,6 +1450,24 @@ body.pane-resizing .pane-resize-handle::after {
   background: var(--yellow-dim);
   transform: translate(-1px, -1px);
   box-shadow: 5px 5px 0 var(--border);
+}
+
+.form-group input:disabled,
+.form-group textarea:disabled,
+.form-group select:disabled {
+  background: var(--surface-tertiary);
+  color: var(--text-dim);
+  cursor: not-allowed;
+  opacity: 0.68;
+  filter: grayscale(0.35);
+  box-shadow: 2px 2px 0 var(--border);
+}
+
+.form-group input:disabled:focus,
+.form-group textarea:disabled:focus,
+.form-group select:disabled:focus {
+  transform: none;
+  box-shadow: 2px 2px 0 var(--border);
 }
 
 .form-group input::placeholder,

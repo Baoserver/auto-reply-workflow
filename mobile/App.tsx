@@ -9,14 +9,16 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
 } from 'react-native';
 
 const appLogo = require('./assets/app-logo.png');
+const guardLogo = require('./assets/bot-tubiao.png');
 
-type Tab = 'home' | 'logs' | 'connect';
+type Tab = 'home' | 'logs' | 'workflow' | 'connect';
 type StatsRange = 'day' | 'month' | 'year' | 'total';
 type LogFilter = 'all' | 'vision' | 'ocr' | 'reply' | 'escalation' | 'error';
 
@@ -53,6 +55,22 @@ interface DashboardResponse {
   pendingReplies?: PendingReply[];
 }
 
+interface WorkflowConfig {
+  wechat: { enabled: boolean };
+  wecom: { enabled: boolean };
+  workflow_mode: 'customer' | 'assistant';
+  mode: 'assist' | 'auto';
+  escalation: { keywords: string; max_unsolved_rounds: number };
+  ocr: {
+    enabled: boolean;
+    fast_mode: boolean;
+    check_interval: number;
+    guard_enabled: boolean;
+    guard_previous_check_interval: number;
+    trigger_keywords: string;
+  };
+}
+
 const STORAGE_KEYS = {
   serviceUrl: 'vision-cs-mobile-service-url',
   token: 'vision-cs-mobile-token',
@@ -77,6 +95,22 @@ const defaultDashboard: DashboardResponse = {
   },
   latestEvents: [],
   pendingReplies: [],
+};
+
+const defaultWorkflowConfig: WorkflowConfig = {
+  wechat: { enabled: true },
+  wecom: { enabled: true },
+  workflow_mode: 'customer',
+  mode: 'auto',
+  escalation: { keywords: '退款,投诉,经理,报警', max_unsolved_rounds: 2 },
+  ocr: {
+    enabled: true,
+    fast_mode: true,
+    check_interval: 3,
+    guard_enabled: false,
+    guard_previous_check_interval: 3,
+    trigger_keywords: '怎么,如何,能不能,请问,价格,发货,退款,投诉,订单,物流,客服,帮助,问题',
+  },
 };
 
 function normalizeBaseUrl(value: string) {
@@ -191,7 +225,18 @@ export default function App() {
   const [activePendingId, setActivePendingId] = useState('');
   const [pendingDraft, setPendingDraft] = useState('');
   const [pendingSubmitting, setPendingSubmitting] = useState(false);
+  const [workflowConfig, setWorkflowConfig] = useState<WorkflowConfig>(defaultWorkflowConfig);
+  const [workflowLoading, setWorkflowLoading] = useState(false);
+  const [workflowSaving, setWorkflowSaving] = useState(false);
+  const [lastHeartbeatAt, setLastHeartbeatAt] = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const lastHeartbeatRef = useRef<number | null>(null);
+
+  const markHeartbeat = useCallback(() => {
+    const now = Date.now();
+    lastHeartbeatRef.current = now;
+    setLastHeartbeatAt(now);
+  }, []);
 
   const authedHeaders = useMemo(() => ({
     authorization: `Bearer ${token}`,
@@ -225,7 +270,8 @@ export default function App() {
       });
     }
     setConnected(true);
-  }, [authedHeaders, request, serviceUrl, token]);
+    markHeartbeat();
+  }, [authedHeaders, markHeartbeat, request, serviceUrl, token]);
 
   const refreshEvents = useCallback(async () => {
     if (!serviceUrl || !token) return;
@@ -233,16 +279,83 @@ export default function App() {
     setEvents(body.events || []);
   }, [authedHeaders, request, serviceUrl, token]);
 
+  const refreshWorkflowConfig = useCallback(async () => {
+    if (!serviceUrl || !token) return;
+    setWorkflowLoading(true);
+    try {
+      const body = await request('/api/config', { headers: authedHeaders });
+      setWorkflowConfig({ ...defaultWorkflowConfig, ...(body.config || {}) });
+    } catch (error) {
+      Alert.alert('读取失败', String(error instanceof Error ? error.message : error));
+    } finally {
+      setWorkflowLoading(false);
+    }
+  }, [authedHeaders, request, serviceUrl, token]);
+
+  const updateWorkflowConfig = (patch: Partial<WorkflowConfig>) => {
+    setWorkflowConfig((prev) => ({ ...prev, ...patch }));
+  };
+
+  const updateWorkflowOcr = (patch: Partial<WorkflowConfig['ocr']>) => {
+    setWorkflowConfig((prev) => ({ ...prev, ocr: { ...prev.ocr, ...patch } }));
+  };
+
+  const toggleWorkflowGuard = (enabled: boolean) => {
+    setWorkflowConfig((prev) => {
+      if (enabled) {
+        return {
+          ...prev,
+          ocr: {
+            ...prev.ocr,
+            guard_enabled: true,
+            guard_previous_check_interval: prev.ocr.check_interval,
+            check_interval: 60,
+          },
+        };
+      }
+      return {
+        ...prev,
+        ocr: {
+          ...prev.ocr,
+          guard_enabled: false,
+          check_interval: prev.ocr.guard_previous_check_interval || 3,
+        },
+      };
+    });
+  };
+
+  const saveWorkflowConfig = async () => {
+    setWorkflowSaving(true);
+    try {
+      const body = await request('/api/config', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({ config: workflowConfig }),
+      });
+      setWorkflowConfig({ ...defaultWorkflowConfig, ...(body.config || workflowConfig) });
+      await refreshDashboard();
+      Alert.alert('已保存', '工作流设置已同步到桌面端');
+    } catch (error) {
+      Alert.alert('保存失败', String(error instanceof Error ? error.message : error));
+    } finally {
+      setWorkflowSaving(false);
+    }
+  };
+
   const connectStream = useCallback(() => {
     if (!serviceUrl || !token) return;
     wsRef.current?.close();
     const ws = new WebSocket(wsUrlFor(serviceUrl, token));
     wsRef.current = ws;
-    ws.onopen = () => setConnected(true);
+    ws.onopen = () => {
+      setConnected(true);
+      markHeartbeat();
+    };
     ws.onclose = () => setConnected(false);
     ws.onerror = () => setConnected(false);
     ws.onmessage = (message) => {
       try {
+        markHeartbeat();
         const payload = JSON.parse(String(message.data));
         if (payload.type === 'event' && payload.event) {
           setEvents((prev) => [...prev.slice(-99), payload.event]);
@@ -275,17 +388,26 @@ export default function App() {
 
   useEffect(() => {
     if (!serviceUrl || !token) return;
-    refreshDashboard().catch(() => setConnected(false));
+    const heartbeat = async () => {
+      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('heartbeat timeout')), 5000));
+      await Promise.race([refreshDashboard(), timeout]);
+    };
+    heartbeat().catch(() => setConnected(false));
     refreshEvents().catch(() => {});
+    refreshWorkflowConfig().catch(() => {});
     connectStream();
     const timer = setInterval(() => {
-      refreshDashboard().catch(() => setConnected(false));
-    }, 10000);
+      heartbeat().catch(() => setConnected(false));
+    }, 8000);
+    const staleTimer = setInterval(() => {
+      setConnected((current) => current && Boolean(lastHeartbeatRef.current) && Date.now() - Number(lastHeartbeatRef.current) < 16000);
+    }, 3000);
     return () => {
       clearInterval(timer);
+      clearInterval(staleTimer);
       wsRef.current?.close();
     };
-  }, [connectStream, refreshDashboard, refreshEvents, serviceUrl, token]);
+  }, [connectStream, refreshDashboard, refreshEvents, refreshWorkflowConfig, serviceUrl, token]);
 
   const saveAddress = async () => {
     const next = normalizeBaseUrl(serviceUrl);
@@ -346,6 +468,12 @@ export default function App() {
     setActivePendingId(latest.id);
     setPendingDraft(latest.content || '');
   }, [activePendingId, pendingReplies]);
+
+  useEffect(() => {
+    if (tab === 'workflow') {
+      refreshWorkflowConfig().catch(() => {});
+    }
+  }, [refreshWorkflowConfig, tab]);
 
   const activePendingReply = pendingReplies.find((reply) => reply.id === activePendingId) || pendingReplies[0] || null;
 
@@ -450,7 +578,8 @@ export default function App() {
       <View style={styles.pageHost}>
       {tab === 'home' && (
         <ScrollView style={styles.scroller} contentContainerStyle={styles.content}>
-          <View style={[styles.homeHero, dashboard.running ? styles.homeHeroOn : styles.homeHeroOff]}>
+          <View style={[styles.homeHero, dashboard.running ? styles.homeHeroOn : styles.homeHeroOff, workflowConfig.ocr.guard_enabled && styles.homeHeroGuard]}>
+            {workflowConfig.ocr.guard_enabled && <Image source={guardLogo} style={styles.homeHeroGuardLogo} />}
             <View>
               <Text style={styles.homeKicker}>AUTO REPLY OPS</Text>
               <Text style={styles.homeHeroTitle}>{dashboard.running ? '托管运行中' : '等待启动'}</Text>
@@ -528,6 +657,112 @@ export default function App() {
         </View>
       )}
 
+      {tab === 'workflow' && (
+        <ScrollView style={styles.scroller} contentContainerStyle={styles.content}>
+          <SectionTitle title="工作流设置" />
+          <View style={styles.workflowCard}>
+            <Text style={styles.blackLabel}>回复策略</Text>
+            <ToggleRow
+              label="微信"
+              value={workflowConfig.wechat.enabled}
+              onValueChange={(enabled) => updateWorkflowConfig({ wechat: { enabled } })}
+            />
+            <ToggleRow
+              label="企业微信"
+              value={workflowConfig.wecom.enabled}
+              onValueChange={(enabled) => updateWorkflowConfig({ wecom: { enabled } })}
+            />
+            <ToggleRow
+              label="值守"
+              value={workflowConfig.ocr.guard_enabled}
+              onValueChange={toggleWorkflowGuard}
+              hint={workflowConfig.ocr.guard_enabled ? 'OCR 间隔固定 60 秒' : '开启后先点击第一条会话再识别'}
+            />
+          </View>
+
+          <View style={styles.workflowCard}>
+            <Text style={styles.blackLabel}>工作模式</Text>
+            <Segmented
+              value={workflowConfig.workflow_mode}
+              options={[
+                { value: 'customer', label: '客服模式' },
+                { value: 'assistant', label: '助手模式' },
+              ]}
+              onChange={(value) => updateWorkflowConfig({ workflow_mode: value as WorkflowConfig['workflow_mode'] })}
+            />
+            <Text style={styles.workflowHint}>
+              {workflowConfig.workflow_mode === 'assistant' ? '关键词触发完整上下文工作流' : '识别客户新消息并回复'}
+            </Text>
+
+            <Text style={styles.workflowSubLabel}>回复模式</Text>
+            <Segmented
+              value={workflowConfig.mode}
+              options={[
+                { value: 'assist', label: '辅助' },
+                { value: 'auto', label: '托管' },
+              ]}
+              onChange={(value) => updateWorkflowConfig({ mode: value as WorkflowConfig['mode'] })}
+            />
+          </View>
+
+          <View style={styles.workflowCard}>
+            <Text style={styles.blackLabel}>OCR</Text>
+            <ToggleRow
+              label="启用本地 OCR"
+              value={workflowConfig.ocr.enabled}
+              onValueChange={(enabled) => updateWorkflowOcr({ enabled })}
+            />
+            <ToggleRow
+              label="快速模式"
+              value={workflowConfig.ocr.fast_mode}
+              onValueChange={(fast_mode) => updateWorkflowOcr({ fast_mode })}
+            />
+            <Text style={styles.label}>检测间隔（秒）</Text>
+            <TextInput
+              value={String(workflowConfig.ocr.guard_enabled ? 60 : workflowConfig.ocr.check_interval)}
+              onChangeText={(value) => updateWorkflowOcr({ check_interval: Number(value) || 3 })}
+              keyboardType="number-pad"
+              editable={!workflowConfig.ocr.guard_enabled}
+              style={[styles.input, workflowConfig.ocr.guard_enabled && styles.inputDisabled]}
+            />
+            {workflowConfig.ocr.guard_enabled && (
+              <Text style={styles.workflowHint}>值守已开启，检测间隔固定为 60 秒</Text>
+            )}
+            <Text style={styles.label}>触发关键词</Text>
+            <TextInput
+              value={workflowConfig.ocr.trigger_keywords}
+              onChangeText={(trigger_keywords) => updateWorkflowOcr({ trigger_keywords })}
+              multiline
+              textAlignVertical="top"
+              style={[styles.input, styles.workflowTextArea]}
+            />
+          </View>
+
+          {workflowConfig.workflow_mode === 'customer' && (
+            <View style={styles.workflowCard}>
+              <Text style={styles.blackLabel}>客服升级</Text>
+              <Text style={styles.label}>升级关键词</Text>
+              <TextInput
+                value={workflowConfig.escalation.keywords}
+                onChangeText={(keywords) => updateWorkflowConfig({ escalation: { ...workflowConfig.escalation, keywords } })}
+                style={styles.input}
+              />
+              <Text style={styles.label}>未解决轮数上限</Text>
+              <TextInput
+                value={String(workflowConfig.escalation.max_unsolved_rounds)}
+                onChangeText={(value) => updateWorkflowConfig({ escalation: { ...workflowConfig.escalation, max_unsolved_rounds: Number(value) || 2 } })}
+                keyboardType="number-pad"
+                style={styles.input}
+              />
+            </View>
+          )}
+
+          <Pressable style={styles.primaryActionWide} onPress={saveWorkflowConfig} disabled={workflowSaving || workflowLoading || !token}>
+            {workflowSaving ? <ActivityIndicator color="#171717" /> : <Text style={styles.primaryActionText}>{workflowLoading ? '读取中' : '保存工作流'}</Text>}
+          </Pressable>
+        </ScrollView>
+      )}
+
       {tab === 'connect' && (
         <ScrollView style={styles.scroller} contentContainerStyle={styles.content}>
           <SectionTitle title="连接桌面服务" />
@@ -583,6 +818,7 @@ export default function App() {
 
       <View style={styles.tabs}>
         <TabButton label="首页" active={tab === 'home'} onPress={() => setTab('home')} />
+        <TabButton label="工作流" active={tab === 'workflow'} onPress={() => setTab('workflow')} />
         <TabButton label="日志" active={tab === 'logs'} onPress={() => setTab('logs')} />
         <TabButton label="连接" active={tab === 'connect'} onPress={() => setTab('connect')} />
       </View>
@@ -617,6 +853,40 @@ function StatCard({ label, value, hint, tone }: { label: string; value: number; 
 
 function SectionTitle({ title }: { title: string }) {
   return <Text style={styles.sectionTitle}>{title}</Text>;
+}
+
+function ToggleRow({ label, value, hint, onValueChange }: { label: string; value: boolean; hint?: string; onValueChange: (value: boolean) => void }) {
+  return (
+    <View style={styles.toggleRow}>
+      <View style={styles.toggleCopy}>
+        <Text style={styles.toggleLabel}>{label}</Text>
+        {hint ? <Text style={styles.workflowHint}>{hint}</Text> : null}
+      </View>
+      <Switch
+        value={value}
+        onValueChange={onValueChange}
+        trackColor={{ false: '#D9D1C3', true: '#B8E9C7' }}
+        thumbColor={value ? '#36B37E' : '#FFFDF7'}
+        ios_backgroundColor="#D9D1C3"
+      />
+    </View>
+  );
+}
+
+function Segmented({ value, options, onChange }: { value: string; options: Array<{ value: string; label: string }>; onChange: (value: string) => void }) {
+  return (
+    <View style={styles.segmented}>
+      {options.map((option) => (
+        <Pressable
+          key={option.value}
+          style={[styles.segmentButton, value === option.value && styles.segmentButtonActive]}
+          onPress={() => onChange(option.value)}
+        >
+          <Text style={[styles.segmentText, value === option.value && styles.segmentTextActive]}>{option.label}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
 }
 
 function EventRow({ event, compact = false }: { event: AgentEvent; compact?: boolean }) {
@@ -682,6 +952,8 @@ const styles = StyleSheet.create({
   scroller: { flex: 1 },
   content: { padding: 14, gap: 12, paddingBottom: 18 },
   homeHero: { minHeight: 132, padding: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', borderWidth: 3, borderColor: '#171717', borderRadius: 8, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 4, height: 4 }, shadowRadius: 0, transform: [{ rotate: '-0.45deg' }] },
+  homeHeroGuard: { overflow: 'visible' },
+  homeHeroGuardLogo: { position: 'absolute', right: -28, bottom: -60, width: 126, height: 126, resizeMode: 'contain', zIndex: 10 },
   homeHeroOn: { backgroundColor: '#F7D748' },
   homeHeroOff: { backgroundColor: '#F4C7A1' },
   homeKicker: { alignSelf: 'flex-start', backgroundColor: '#171717', color: '#FFFFFF', borderRadius: 4, paddingHorizontal: 7, paddingVertical: 3, fontSize: 9, fontWeight: '900', marginBottom: 8 },
@@ -729,6 +1001,19 @@ const styles = StyleSheet.create({
   secondaryActionWide: { minHeight: 48, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#171717', borderRadius: 6, backgroundColor: '#FFFFFF', marginBottom: 8, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 3, height: 3 }, shadowRadius: 0 },
   secondaryActionText: { fontWeight: '900', color: '#171717' },
   sectionTitle: { fontSize: 16, fontWeight: '900', color: '#171717', marginTop: 4 },
+  workflowCard: { backgroundColor: '#FFFDF7', borderWidth: 3, borderColor: '#171717', borderRadius: 8, padding: 12, gap: 10, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 3, height: 3 }, shadowRadius: 0 },
+  toggleRow: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingVertical: 4, borderBottomWidth: 2, borderColor: '#E1D7C6' },
+  toggleCopy: { flex: 1, minWidth: 0 },
+  toggleLabel: { fontSize: 14, fontWeight: '900', color: '#171717' },
+  workflowHint: { color: '#6B6255', fontSize: 11, lineHeight: 15, fontWeight: '800', marginTop: 4 },
+  workflowSubLabel: { color: '#171717', fontWeight: '900', marginTop: 6 },
+  segmented: { flexDirection: 'row', gap: 8 },
+  segmentButton: { flex: 1, minHeight: 42, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF', borderWidth: 3, borderColor: '#171717', borderRadius: 6 },
+  segmentButtonActive: { backgroundColor: '#F7D748' },
+  segmentText: { fontSize: 13, fontWeight: '900', color: '#6B6255' },
+  segmentTextActive: { color: '#171717' },
+  inputDisabled: { backgroundColor: '#E4DED3', color: '#7B715F' },
+  workflowTextArea: { minHeight: 92, paddingTop: 10 },
   eventRow: { maxWidth: '86%', marginBottom: 12 },
   eventReceived: { alignSelf: 'flex-start' },
   eventSent: { alignSelf: 'flex-end' },
