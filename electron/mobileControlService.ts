@@ -572,6 +572,17 @@ export class MobileControlService {
     return stored;
   }
 
+  broadcastConfig(config: any) {
+    const payload = JSON.stringify({ type: 'config', config: sanitizeMobileConfig(config || {}) });
+    for (const client of this.clients) {
+      try {
+        sendWebSocketText(client, payload);
+      } catch {
+        this.clients.delete(client);
+      }
+    }
+  }
+
   clearPendingReply(id: string) {
     this.pendingReplies.delete(id);
   }
@@ -648,6 +659,7 @@ export class MobileControlService {
         this.options.checkProcess('WeChat'),
         this.options.checkProcess('企业微信'),
       ]);
+      const config = await this.options.loadConfig?.();
       const events = this.eventStore.listEvents({ limit: 500 });
       const desktopStats = await this.options.getDashboardStats?.();
       const eventConnections = summarizeConnectionsFromEvents(events);
@@ -659,6 +671,7 @@ export class MobileControlService {
           wecom: eventConnections.wecom ?? wecom,
         },
         stats: mergeStatsStore(this.eventStore.stats(), desktopStats),
+        config: sanitizeMobileConfig(config || {}),
         pendingReplies: this.listPendingReplies(),
         latestEvents: events.filter((event) => (
           event.type === 'vision' ||

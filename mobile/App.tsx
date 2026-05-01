@@ -3,6 +3,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
   FlatList,
   Image,
   Pressable,
@@ -17,6 +19,7 @@ import {
 
 const appLogo = require('./assets/app-logo.png');
 const guardLogo = require('./assets/bot-tubiao.png');
+const sleepGuardLogo = require('./assets/sleep-bot.png');
 
 type Tab = 'home' | 'logs' | 'workflow' | 'connect';
 type StatsRange = 'day' | 'month' | 'year' | 'total';
@@ -228,14 +231,25 @@ export default function App() {
   const [workflowConfig, setWorkflowConfig] = useState<WorkflowConfig>(defaultWorkflowConfig);
   const [workflowLoading, setWorkflowLoading] = useState(false);
   const [workflowSaving, setWorkflowSaving] = useState(false);
+  const [guardSaving, setGuardSaving] = useState(false);
   const [lastHeartbeatAt, setLastHeartbeatAt] = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const lastHeartbeatRef = useRef<number | null>(null);
+  const heartbeatFailuresRef = useRef(0);
+  const guardBumpMotion = useRef(new Animated.Value(0)).current;
 
   const markHeartbeat = useCallback(() => {
     const now = Date.now();
+    heartbeatFailuresRef.current = 0;
     lastHeartbeatRef.current = now;
     setLastHeartbeatAt(now);
+  }, []);
+
+  const markHeartbeatFailure = useCallback(() => {
+    heartbeatFailuresRef.current += 1;
+    if (heartbeatFailuresRef.current >= 5) {
+      setConnected(false);
+    }
   }, []);
 
   const authedHeaders = useMemo(() => ({
@@ -262,6 +276,9 @@ export default function App() {
     const body = await request('/api/dashboard', { headers: authedHeaders });
     setDashboard(body);
     setPendingReplies(Array.isArray(body.pendingReplies) ? body.pendingReplies : []);
+    if (body.config && !guardSaving) {
+      setWorkflowConfig({ ...defaultWorkflowConfig, ...(body.config || {}) });
+    }
     if (Array.isArray(body.latestEvents) && body.latestEvents.length > 0) {
       setEvents((prev) => {
         const seen = new Set(prev.map((event) => event.id || `${event.ts}-${event.type}-${eventBody(event)}`));
@@ -271,7 +288,7 @@ export default function App() {
     }
     setConnected(true);
     markHeartbeat();
-  }, [authedHeaders, markHeartbeat, request, serviceUrl, token]);
+  }, [authedHeaders, guardSaving, markHeartbeat, request, serviceUrl, token]);
 
   const refreshEvents = useCallback(async () => {
     if (!serviceUrl || !token) return;
@@ -300,29 +317,75 @@ export default function App() {
     setWorkflowConfig((prev) => ({ ...prev, ocr: { ...prev.ocr, ...patch } }));
   };
 
-  const toggleWorkflowGuard = (enabled: boolean) => {
-    setWorkflowConfig((prev) => {
-      if (enabled) {
-        return {
-          ...prev,
-          ocr: {
-            ...prev.ocr,
-            guard_enabled: true,
-            guard_previous_check_interval: prev.ocr.check_interval,
-            check_interval: 60,
-          },
-        };
-      }
+  const getGuardConfig = (config: WorkflowConfig, enabled: boolean): WorkflowConfig => {
+    if (enabled) {
       return {
-        ...prev,
+        ...config,
         ocr: {
-          ...prev.ocr,
-          guard_enabled: false,
-          check_interval: prev.ocr.guard_previous_check_interval || 3,
+          ...config.ocr,
+          guard_enabled: true,
+          guard_previous_check_interval: config.ocr.check_interval,
+          check_interval: 60,
         },
       };
-    });
+    }
+    return {
+      ...config,
+      ocr: {
+        ...config.ocr,
+        guard_enabled: false,
+        check_interval: config.ocr.guard_previous_check_interval || 3,
+      },
+    };
   };
+
+  const playGuardBump = () => {
+    guardBumpMotion.stopAnimation();
+    guardBumpMotion.setValue(0);
+    Animated.timing(guardBumpMotion, {
+      toValue: 1,
+      duration: 2000,
+      easing: Easing.linear,
+      useNativeDriver: true,
+    }).start(() => guardBumpMotion.setValue(0));
+  };
+
+  const playGuardBumpAfterLayout = () => {
+    requestAnimationFrame(playGuardBump);
+  };
+
+  const toggleGuardFromHome = async () => {
+    if (!token) {
+      Alert.alert('未连接', '请先连接桌面服务后再切换值守');
+      return;
+    }
+    if (guardSaving) return;
+    const previousConfig = workflowConfig;
+    const nextEnabled = !workflowConfig.ocr.guard_enabled;
+    const nextConfig = getGuardConfig(previousConfig, nextEnabled);
+    setGuardSaving(true);
+    setWorkflowConfig(nextConfig);
+    playGuardBumpAfterLayout();
+    try {
+      const body = await request('/api/config', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({ config: nextConfig }),
+      });
+      setWorkflowConfig({ ...defaultWorkflowConfig, ...(body.config || nextConfig) });
+      await refreshDashboard();
+    } catch (error) {
+      setWorkflowConfig(previousConfig);
+      playGuardBumpAfterLayout();
+      Alert.alert('切换失败', String(error instanceof Error ? error.message : error));
+    } finally {
+      setGuardSaving(false);
+    }
+  };
+
+  useEffect(() => () => {
+    guardBumpMotion.stopAnimation();
+  }, [guardBumpMotion]);
 
   const saveWorkflowConfig = async () => {
     setWorkflowSaving(true);
@@ -351,8 +414,8 @@ export default function App() {
       setConnected(true);
       markHeartbeat();
     };
-    ws.onclose = () => setConnected(false);
-    ws.onerror = () => setConnected(false);
+    ws.onclose = () => markHeartbeatFailure();
+    ws.onerror = () => markHeartbeatFailure();
     ws.onmessage = (message) => {
       try {
         markHeartbeat();
@@ -379,9 +442,12 @@ export default function App() {
           }
           refreshDashboard().catch(() => {});
         }
+        if (payload.type === 'config' && payload.config && !guardSaving) {
+          setWorkflowConfig({ ...defaultWorkflowConfig, ...(payload.config || {}) });
+        }
       } catch {}
     };
-  }, [refreshDashboard, serviceUrl, token]);
+  }, [guardSaving, markHeartbeatFailure, refreshDashboard, serviceUrl, token]);
 
   useEffect(() => {
     const load = async () => {
@@ -401,22 +467,18 @@ export default function App() {
       const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('heartbeat timeout')), 5000));
       await Promise.race([refreshDashboard(), timeout]);
     };
-    heartbeat().catch(() => setConnected(false));
+    heartbeat().catch(markHeartbeatFailure);
     refreshEvents().catch(() => {});
     refreshWorkflowConfig().catch(() => {});
     connectStream();
     const timer = setInterval(() => {
-      heartbeat().catch(() => setConnected(false));
+      heartbeat().catch(markHeartbeatFailure);
     }, 8000);
-    const staleTimer = setInterval(() => {
-      setConnected((current) => current && Boolean(lastHeartbeatRef.current) && Date.now() - Number(lastHeartbeatRef.current) < 16000);
-    }, 3000);
     return () => {
       clearInterval(timer);
-      clearInterval(staleTimer);
       wsRef.current?.close();
     };
-  }, [connectStream, refreshDashboard, refreshEvents, refreshWorkflowConfig, serviceUrl, token]);
+  }, [connectStream, markHeartbeatFailure, refreshDashboard, refreshEvents, refreshWorkflowConfig, serviceUrl, token]);
 
   const saveAddress = async () => {
     const next = normalizeBaseUrl(serviceUrl);
@@ -537,6 +599,30 @@ export default function App() {
   const visibleEvents = events.filter((event) => matchesFilter(event, filter)).slice().reverse();
   const keyEvents = events.filter(isKeyHomeEvent);
   const latestKeyEvents = keyEvents.slice(-6);
+  const showGuardActiveIcon = tab === 'home' && workflowConfig.ocr.guard_enabled;
+  const showSleepGuardIcon = !workflowConfig.ocr.guard_enabled;
+  const guardBumpStyle = {
+    transform: [
+      {
+        translateY: guardBumpMotion.interpolate({
+          inputRange: [0, 0.32, 0.56, 0.76, 1],
+          outputRange: [0, -16, 14, -5, 0],
+        }),
+      },
+      {
+        scaleX: guardBumpMotion.interpolate({
+          inputRange: [0, 0.32, 0.56, 0.76, 1],
+          outputRange: [1, 1.18, 1.08, 1.05, 1],
+        }),
+      },
+      {
+        scaleY: guardBumpMotion.interpolate({
+          inputRange: [0, 0.32, 0.56, 0.76, 1],
+          outputRange: [1, 1.18, 0.86, 1.06, 1],
+        }),
+      },
+    ],
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -587,8 +673,7 @@ export default function App() {
       <View style={styles.pageHost}>
       {tab === 'home' && (
         <ScrollView style={styles.scroller} contentContainerStyle={styles.content}>
-          <View style={[styles.homeHero, dashboard.running ? styles.homeHeroOn : styles.homeHeroOff, workflowConfig.ocr.guard_enabled && styles.homeHeroGuard]}>
-            {workflowConfig.ocr.guard_enabled && <Image source={guardLogo} style={styles.homeHeroGuardLogo} />}
+          <View style={[styles.homeHero, dashboard.running ? styles.homeHeroOn : styles.homeHeroOff]}>
             <View>
               <Text style={styles.homeKicker}>AUTO REPLY OPS</Text>
               <Text style={styles.homeHeroTitle}>{dashboard.running ? '托管运行中' : '等待启动'}</Text>
@@ -621,6 +706,22 @@ export default function App() {
                 <StatCard tone="reply" label="AI回复" value={visibleStats.aiReplies} hint="已生成" />
                 <StatCard tone="escalation" label="转人工" value={visibleStats.escalations} hint={visibleStats.escalations > 0 ? '需关注' : '暂无'} />
               </View>
+              {showGuardActiveIcon && (
+                <Animated.View style={[styles.guardActiveClip, guardBumpStyle]}>
+                  <Pressable
+                    onPress={toggleGuardFromHome}
+                    disabled={guardSaving}
+                    hitSlop={10}
+                    style={({ pressed }) => [
+                      styles.guardActiveButton,
+                      pressed && !guardSaving && styles.guardTogglePressed,
+                      guardSaving && styles.guardToggleSaving,
+                    ]}
+                  >
+                    <Image source={guardLogo} style={styles.guardActiveImage} />
+                  </Pressable>
+                </Animated.View>
+              )}
             </View>
 
             <View style={styles.homeChannelCard}>
@@ -680,12 +781,6 @@ export default function App() {
               label="企业微信"
               value={workflowConfig.wecom.enabled}
               onValueChange={(enabled) => updateWorkflowConfig({ wecom: { enabled } })}
-            />
-            <ToggleRow
-              label="值守"
-              value={workflowConfig.ocr.guard_enabled}
-              onValueChange={toggleWorkflowGuard}
-              hint={workflowConfig.ocr.guard_enabled ? 'OCR 间隔固定 60 秒' : '开启后先点击第一条会话再识别'}
             />
           </View>
 
@@ -815,6 +910,28 @@ export default function App() {
       </View>
 
       {tab !== 'connect' && (
+        <>
+        <View style={styles.assetPreload} pointerEvents="none">
+          <Image source={sleepGuardLogo} style={styles.assetPreloadImage} />
+          <Image source={guardLogo} style={styles.assetPreloadImage} />
+        </View>
+        {showSleepGuardIcon && (
+        <Animated.View style={[styles.guardToggleWrap, guardBumpStyle]}>
+          <Pressable
+            onPress={toggleGuardFromHome}
+            disabled={guardSaving || tab !== 'home'}
+            hitSlop={10}
+            style={({ pressed }) => [
+              styles.guardToggle,
+              pressed && !guardSaving && tab === 'home' && styles.guardTogglePressed,
+              guardSaving && styles.guardToggleSaving,
+              tab !== 'home' && styles.guardToggleDecorative,
+            ]}
+          >
+            <Image source={sleepGuardLogo} style={styles.guardToggleImage} />
+          </Pressable>
+        </Animated.View>
+        )}
         <View style={styles.actionBar}>
           <Pressable
             style={[
@@ -839,6 +956,7 @@ export default function App() {
             <Text style={styles.actionButtonText}>{loading ? '识别中' : '单次识别'}</Text>
           </Pressable>
         </View>
+        </>
       )}
 
       <View style={styles.tabs}>
@@ -977,8 +1095,6 @@ const styles = StyleSheet.create({
   scroller: { flex: 1 },
   content: { padding: 14, gap: 12, paddingBottom: 18 },
   homeHero: { minHeight: 132, padding: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', borderWidth: 3, borderColor: '#171717', borderRadius: 8, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 4, height: 4 }, shadowRadius: 0, transform: [{ rotate: '-0.45deg' }] },
-  homeHeroGuard: { overflow: 'visible' },
-  homeHeroGuardLogo: { position: 'absolute', right: -28, bottom: -60, width: 126, height: 126, resizeMode: 'contain', zIndex: 10 },
   homeHeroOn: { backgroundColor: '#F7D748' },
   homeHeroOff: { backgroundColor: '#F4C7A1' },
   homeKicker: { alignSelf: 'flex-start', backgroundColor: '#171717', color: '#FFFFFF', borderRadius: 4, paddingHorizontal: 7, paddingVertical: 3, fontSize: 9, fontWeight: '900', marginBottom: 8 },
@@ -987,7 +1103,7 @@ const styles = StyleSheet.create({
   homeHeroStamp: { borderWidth: 3, borderColor: '#171717', backgroundColor: '#FFFDF7', borderRadius: 6, paddingHorizontal: 11, paddingVertical: 8, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 3, height: 3 }, shadowRadius: 0 },
   homeHeroStampText: { fontSize: 20, fontWeight: '900', color: '#171717' },
   homeMatrix: { gap: 10, alignItems: 'stretch' },
-  homeStatsCard: { minHeight: 232, flexDirection: 'row', overflow: 'hidden', backgroundColor: '#FFFDF7', borderWidth: 3, borderColor: '#171717', borderRadius: 8, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 3, height: 3 }, shadowRadius: 0 },
+  homeStatsCard: { position: 'relative', minHeight: 232, flexDirection: 'row', overflow: 'visible', backgroundColor: '#FFFDF7', borderWidth: 3, borderColor: '#171717', borderRadius: 8, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 3, height: 3 }, shadowRadius: 0 },
   homeStatsTabs: { width: 58, backgroundColor: '#EFE7D8', borderRightWidth: 3, borderColor: '#171717' },
   homeStatsTab: { flex: 1, alignItems: 'center', justifyContent: 'center', borderBottomWidth: 3, borderColor: '#171717', paddingVertical: 5 },
   homeStatsTabActive: { backgroundColor: '#FFFDF7' },
@@ -1015,7 +1131,18 @@ const styles = StyleSheet.create({
   homeBoardTitle: { fontSize: 18, fontWeight: '900', color: '#171717' },
   homeBoardCount: { backgroundColor: '#F7D748', borderWidth: 2, borderColor: '#171717', borderRadius: 4, paddingHorizontal: 7, paddingVertical: 4, fontSize: 11, fontWeight: '900', color: '#171717', overflow: 'hidden' },
   chatEmpty: { borderWidth: 2, borderColor: '#171717', borderRadius: 6, padding: 14, color: '#6B6255', fontWeight: '800', textAlign: 'center', backgroundColor: '#F7F0E4' },
-  actionBar: { flexDirection: 'row', gap: 10, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 10, borderTopWidth: 2, borderColor: '#171717', backgroundColor: '#FFFDF7' },
+  actionBar: { flexDirection: 'row', gap: 10, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 10, borderTopWidth: 2, borderColor: '#171717', backgroundColor: '#FFFDF7', overflow: 'visible' },
+  assetPreload: { position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' },
+  assetPreloadImage: { width: 1, height: 1 },
+  guardToggleWrap: { position: 'absolute', right: -46, bottom: 86, width: 188, height: 188, zIndex: 30 },
+  guardToggle: { width: 188, height: 188, alignItems: 'center', justifyContent: 'center' },
+  guardActiveClip: { position: 'absolute', right: -25, top: -96, width: 138, height: 138, overflow: 'visible', zIndex: 6 },
+  guardActiveButton: { width: 138, height: 138, alignItems: 'center', justifyContent: 'center' },
+  guardActiveImage: { width: '100%', height: '100%', resizeMode: 'contain' },
+  guardTogglePressed: { transform: [{ translateY: -2 }, { rotate: '-3deg' }] },
+  guardToggleSaving: { opacity: 1 },
+  guardToggleDecorative: { opacity: 1 },
+  guardToggleImage: { width: '100%', height: '100%', resizeMode: 'contain' },
   actionButton: { flex: 1, minHeight: 46, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#171717', borderRadius: 6, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 3, height: 3 }, shadowRadius: 0 },
   actionStart: { backgroundColor: '#F7D748' },
   actionStop: { backgroundColor: '#F7B6AB' },

@@ -1,13 +1,13 @@
 <claude-mem-context>
 # Memory Context
 
-# [auto-reply-workflow] recent context, 2026-04-30 1:07pm GMT+8
+# [auto-reply-workflow] recent context, 2026-05-01 6:42pm GMT+8
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 
-Stats: 50 obs (9,792t read) | 0t work
+Stats: 50 obs (8,963t read) | 0t work
 
 ### Apr 27, 2026
 S332 移除 SELF_SENDERS 过滤逻辑并重启应用 (Apr 27 at 4:16 PM)
@@ -21,20 +21,6 @@ S335 移除SELF_SENDERS过滤逻辑并实现自动截图清理功能 (Apr 27 at 
 S338 实现MMX视觉API识别结果的实时展示功能，类似OCR内容显示格式 (Apr 27 at 4:52 PM)
 S339 实现MMX视觉API识别结果的实时展示功能 (Apr 27 at 5:00 PM)
 ### Apr 29, 2026
-736 4:49p 🟣 Desktop application successfully started with new logo assets
-738 5:05p 🔴 Mobile app layout styles updated to fix statistics display and scrolling behavior
-739 5:07p 🟣 Real-time event synchronization implemented between server and mobile client
-740 " 🟣 Mobile app APK successfully built with bug fixes for statistics display and layout issues
-741 5:32p 🔴 手机配对后统计数据和设备连接显示缺失
-742 5:34p 🔵 定位移动应用数据存储位置
-743 " 🔴 移动端API缺少桌面统计数据合并
-744 " 🔴 实现桌面端统计与移动端API的数据集成
-745 " 🔴 桌面统计与移动端API集成实现完成并通过编译
-746 5:36p 🔴 修复AppleScript进程检测语法错误
-747 " 🔴 重新启动Electron应用验证AppleScript修复
-748 5:37p 🔴 AppleScript进程检测修复成功验证
-749 " 🔵 移动端配对测试验证成功但统计数据为空
-750 " 🔵 统计数据为空的根本原因分析
 751 5:38p 🟣 增加OCR事件统计和历史事件连接状态推断
 752 " 🟣 移动端统计与连接状态增强功能实现完成
 753 5:39p 🔴 移动端APK构建成功，完整修复部署完成
@@ -72,4 +58,19 @@ S339 实现MMX视觉API识别结果的实时展示功能 (Apr 27 at 5:00 PM)
 794 " 🔴 Fixed robot icon positioning and z-index layering
 795 12:59p 🔴 Fixed robot icon overlay positioning on device connection card
 796 " ✅ Deployed CSS fixes by restarting Electron application
+### May 1, 2026
+810 9:19a ✅ UI toggle interaction simplified
+811 " ✅ Guard toggle animation simplified
+813 " 🔄 Removed animation constants from guard toggle
+815 " 🔄 Replaced animation state with bump key mechanism
+816 " 🔄 Replaced complex animation functions with simple bump effect
+819 " 🔄 Removed animation assets and updated button rendering
+820 9:20a 🔄 Removed unused easeInOutCubic animation function
+817 " 🔄 Updated cleanup effect to clear bump timer
+822 " 🔄 Removed animation assets from package.json build script
+823 " 🟣 Implemented CSS guardBump animation for toggle feedback
+824 9:21a 🔄 Successfully completed guard toggle animation simplification
+825 " 🟣 Enhanced guard toggle animation with squash and bounce effect
+826 9:25a ✅ Extended guard toggle animation duration to 2 seconds
+827 " ✅ Redistributed guard bump animation timing phases
 </claude-mem-context>
