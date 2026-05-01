@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>值守机器人 - 动画过渡系统 v2</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#16161a;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:-apple-system,'PingFang SC','Noto Sans SC',sans-serif;color:#fff;overflow:hidden}
+h1{font-size:18px;margin-bottom:4px;color:#FFE15A;letter-spacing:3px;font-weight:700}
+.sub{font-size:12px;color:#555;margin-bottom:16px}
+
+.wrap{position:relative;width:420px;height:420px;border-radius:28px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.6),inset 0 0 0 2px rgba(255,255,255,.05);background:#FFF8E7}
+canvas{display:block;width:100%;height:100%}
+
+.ctrls{display:flex;gap:14px;margin-top:20px}
+.b{padding:11px 28px;border:none;border-radius:14px;font-size:14px;font-weight:700;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:7px;letter-spacing:1px}
+.b:active{transform:scale(.94)}
+.b:disabled{opacity:.35;cursor:not-allowed;transform:none}
+.b-moon{background:#FF6B5A;color:#fff;box-shadow:0 6px 20px rgba(255,107,90,.35)}
+.b-star{background:#FFE15A;color:#1C1C1A;box-shadow:0 6px 20px rgba(255,225,90,.35)}
+.b-rec{background:#e53e3e;color:#fff;box-shadow:0 6px 20px rgba(229,62,62,.35);font-size:12px;padding:8px 18px}
+
+.info{margin-top:14px;font-size:13px;color:#666;min-height:22px;text-align:center}
+.dots{display:flex;gap:10px;margin-top:10px;align-items:center}
+.d{width:8px;height:8px;border-radius:50%;background:#2a2a2a;transition:all .3s}
+.d.on{background:#FFE15A;box-shadow:0 0 8px #FFE15A}
+.dots span{font-size:10px;color:#444;margin-left:2px}
+</style>
+</head>
+<body>
+
+<h1>值守机器人 动画系统</h1>
+<p class="sub">睡觉 → 飞起 → 悬浮 → 降落 → 睡觉 | 双击画布自动循环</p>
+
+<div class="wrap" id="wrap">
+  <canvas id="c" width="840" height="840"></canvas>
+</div>
+
+<div class="ctrls">
+  <button class="b b-moon" id="bUp">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+    唤醒起飞
+  </button>
+  <button class="b b-star" id="bDn" disabled>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
+    降落休眠
+  </button>
+</div>
+
+<div class="info" id="info">当前：睡觉中 zzz</div>
+<div class="dots">
+  <div class="d on" id="d1"></div><span>睡觉</span>
+  <div class="d" id="d2"></div><span>飞起</span>
+  <div class="d" id="d3"></div><span>悬浮</span>
+  <div class="d" id="d4"></div><span>降落</span>
+  <div class="d" id="d5"></div><span>睡觉</span>
+</div>
+
+<script>
+// ===== Canvas Animation Engine =====
+const C = document.getElementById('c');
+const X = C.getContext('2d');
+const W = 840, H = 840, CX = W/2, CY = H/2;
+const info = document.getElementById('info');
+const bUp = document.getElementById('bUp');
+const bDn = document.getElementById('bDn');
+
+let state = 'sleep'; // sleep | up | float | down
+let t = 0; // global time
+let busy = false;
+let autoLoop = false;
+
+// Easing
+const ease = {
+  inOut: t => t<.5 ? 4*t*t*t : 1-(-2*t+2)**3/2,
+  out: t => 1-(1-t)**3,
+  in: t => t*t*t,
+  outBack: t => { const c=1.70158; return 1+(c+1)*((t-1)**3)+c*((t-1)**2); },
+  outBounce: t => { const n=7.5625,d=2.75; if(t<1/d)return n*t*t; if(t<2/d)return n*(t-=1.5/d)*t+.75; if(t<2.5/d)return n*(t-=2.25/d)*t+.9375; return n*(t-=2.625/d)*t+.984375; },
+  outElastic: t => t===0?0:t===1?1:2**(-10*t)*Math.sin((t*10-.75)*(2*Math.PI)/3)+1
+};
+const lerp = (a,b,t) => a+(b-a)*t;
+const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
+
+// ===== Drawing Helpers =====
+function roundRect(x,y,w,h,r){
+  X.beginPath();
+  X.moveTo(x+r,y);
+  X.lineTo(x+w-r,y); X.arcTo(x+w,y,x+w,y+r,r);
+  X.lineTo(x+w,y+h-r); X.arcTo(x+w,y+h,x+w-r,y+h,r);
+  X.lineTo(x+r,y+h); X.arcTo(x,y+h,x,y+h-r,r);
+  X.lineTo(x,y+r); X.arcTo(x,y,x+r,y,r);
+  X.closePath();
+}
+
+function drawEllipse(cx,cy,rx,ry){
+  X.beginPath();
+  X.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);
+}
+
+// Colors
+const COL = {
+  body: '#FFF1D3',
+  bodyStroke: '#1C1C1A',
+  screen: '#171918',
+  eye: '#FFE15A',
+  cape: '#FF6B5A',
+  capeDark: '#E8524A',
+  bubble: '#FFE15A',
+  blanket: '#FF6B5A',
+  blanketDark: '#E55A4A',
+  flame1: '#FFE15A',
+  flame2: '#FFB84D',
+  flame3: '#FF6B5A',
+  white: '#FFFFFF',
+  star: '#FFE15A',
+  ground: '#1C1C1A',
+  hand: '#FFF3D9',
+  glow: 'rgba(255,225,90,0.15)',
+};
+
+// ===== PARTICLE SYSTEM =====
+class Particle {
+  constructor(x,y,vx,vy,life,size,color){
+    this.x=x;this.y=y;this.vx=vx;this.vy=vy;
+    this.life=life;this.maxLife=life;this.size=size;this.color=color;
+  }
+  update(dt){ this.x+=this.vx*dt; this.y+=this.vy*dt; this.life-=dt; }
+  get alive(){ return this.life>0; }
+  get alpha(){ return clamp(this.life/this.maxLife,0,1); }
+}
+
+let particles = [];
+function emitFlame(x,y,count=3){
+  for(let i=0;i<count;i++){
+    particles.push(new Particle(
+      x + (Math.random()-.5)*30,
+      y,
+      (Math.random()-.5)*40,
+      60 + Math.random()*80,
+      0.3+Math.random()*0.4,
+      6+Math.random()*10,
+      [COL.flame1,COL.flame2,COL.flame3][Math.floor(Math.random()*3)]
+    ));
+  }
+}
+function emitStar(x,y){
+  particles.push(new Particle(
+    x+(Math.random()-.5)*200, y+(Math.random()-.5)*200,
+    (Math.random()-.5)*20, (Math.random()-.5)*20,
+    1+Math.random()*1.5, 3+Math.random()*5,
+    COL.star
+  ));
+}
+function emitDust(x,y){
+  for(let i=0;i<8;i++){
+    particles.push(new Particle(
+      x+(Math.random()-.5)*60, y,
+      (Math.random()-.5)*120, -20-Math.random()*40,
+      0.5+Math.random()*0.5, 4+Math.random()*6,
+      '#D9C89A'
+    ));
+  }
+}
+
+// ===== ROBOT DRAWING =====
+
+// Draw sleep robot (lying on belly)
+function drawSleepRobot(opacity=1, offsetY=0, eyeOpen=0, blanketOpacity=1){
+  X.save();
+  X.globalAlpha = opacity;
+  X.translate(CX, 540 + offsetY);
+
+  const S = 1.8; // scale
+  X.scale(S, S);
+
+  // Shadow on ground
+  X.fillStyle = 'rgba(0,0,0,0.08)';
+  drawEllipse(0, 95, 80, 12);
+  X.fill();
+
+  // Blanket
+  if(blanketOpacity > 0.01){
+    X.save();
+    X.globalAlpha = opacity * blanketOpacity;
+    X.fillStyle = COL.blanket;
+    X.strokeStyle = COL.bodyStroke;
+    X.lineWidth = 3.5;
+    X.beginPath();
+    X.moveTo(-65, 30);
+    X.quadraticCurveTo(-50, -10, -20, 0);
+    X.quadraticCurveTo(0, -20, 20, 0);
+    X.quadraticCurveTo(50, -10, 65, 30);
+    X.quadraticCurveTo(50, 70, 0, 75);
+    X.quadraticCurveTo(-50, 70, -65, 30);
+    X.closePath();
+    X.fill(); X.stroke();
+    // Blanket fold
+    X.strokeStyle = COL.blanketDark;
+    X.lineWidth = 1.2;
+    X.globalAlpha = opacity * blanketOpacity * 0.4;
+    X.beginPath(); X.moveTo(-15, 10); X.quadraticCurveTo(0, 5, 15, 10); X.stroke();
+    X.beginPath(); X.moveTo(-10, 25); X.quadraticCurveTo(0, 20, 10, 25); X.stroke();
+    X.restore();
+  }
+
+  // Hands (under head)
+  X.fillStyle = COL.hand;
+  X.strokeStyle = COL.bodyStroke;
+  X.lineWidth = 2.8;
+  drawEllipse(-22, 25, 12, 8); X.fill(); X.stroke();
+  drawEllipse(5, 25, 12, 8); X.fill(); X.stroke();
+
+  // Body (lying down)
+  X.fillStyle = COL.body;
+  X.strokeStyle = COL.bodyStroke;
+  X.lineWidth = 3.5;
+  drawEllipse(0, 40, 50, 30); X.fill(); X.stroke();
+
+  // Head
+  roundRect(-55, -5, 110, 45, 22);
+  X.fill(); X.stroke();
+
+  // Face screen
+  X.fillStyle = COL.screen;
+  roundRect(-40, 5, 80, 28, 14);
+  X.fill();
+
+  // Eyes
+  if(eyeOpen < 0.5){
+    // Closed eyes (sleeping arcs)
+    const closedAlpha = 1 - eyeOpen*2;
+    X.strokeStyle = COL.eye;
+    X.lineWidth = 2.5;
+    X.lineCap = 'round';
+    X.globalAlpha = opacity * closedAlpha;
+    X.beginPath(); X.moveTo(-22, 18); X.quadraticCurveTo(-17, 25, -12, 18); X.stroke();
+    X.beginPath(); X.moveTo(12, 18); X.quadraticCurveTo(17, 25, 22, 18); X.stroke();
+    X.globalAlpha = opacity;
+  }
+  if(eyeOpen > 0.3){
+    // Open eyes (waking up)
+    const openAlpha = clamp((eyeOpen-0.3)/0.7, 0, 1);
+    X.globalAlpha = opacity * openAlpha;
+    X.fillStyle = COL.eye;
+    // Eye rectangles with rounded corners
+    roundRect(-25, 9, 14, 18, 7); X.fill();
+    roundRect(11, 9, 14, 18, 7); X.fill();
+    // Highlights
+    X.fillStyle = COL.white;
+    X.globalAlpha = opacity * openAlpha * 0.7;
+    roundRect(-22, 12, 5, 5, 2.5); X.fill();
+    roundRect(14, 12, 5, 5, 2.5); X.fill();
+    X.globalAlpha = opacity;
+  }
+
+  // Antenna
+  X.strokeStyle = COL.bodyStroke;
+  X.lineWidth = 2.8;
+  X.lineCap = 'round';
+  X.beginPath(); X.moveTo(-5, -5); X.lineTo(-5, -18); X.stroke();
+  X.fillStyle = '#FFF2D7';
+  X.strokeStyle = COL.bodyStroke;
+  X.lineWidth = 2;
+  X.beginPath(); X.arc(-5, -22, 5, 0, Math.PI*2); X.fill(); X.stroke();
+
+  // Ear bumps
+  X.fillStyle = '#FFF4DF';
+  X.strokeStyle = COL.bodyStroke;
+  X.lineWidth = 2.5;
+  X.beginPath(); X.arc(-55, 17, 8, 0, Math.PI*2); X.fill(); X.stroke();
+  X.beginPath(); X.arc(55, 17, 8, 0, Math.PI*2); X.fill(); X.stroke();
+
+  X.restore();
+}
+
+// Draw Zzz
+function drawZzz(opacity=1, time=0){
+  if(opacity < 0.01) return;
+  X.save();
+  X.globalAlpha = opacity;
+  X.translate(CX, 540);
+  const S = 1.8;
+  X.scale(S, S);
+
+  const chars = ['Z','z','z'];
+  const sizes = [20, 15, 11];
+  for(let i=0;i<3;i++){
+    const phase = (time*0.8 + i*0.35) % 2;
+    const a = phase < 1.5 ? Math.min(phase*2, 1) : Math.max(0, 1-(phase-1.5)*4);
+    X.globalAlpha = opacity * clamp(a, 0, 1);
+    X.fillStyle = COL.bodyStroke;
+    X.font = `900 ${sizes[i]}px "Arial Black",sans-serif`;
+    X.fillText(chars[i], 40 + phase*15, -20 - phase*35 + i*5);
+  }
+  X.restore();
+}
+
+// Draw speech bubble
+function drawBubble(opacity=1, time=0){
+  if(opacity < 0.01) return;
+  X.save();
+  X.globalAlpha = opacity;
+  X.translate(CX, 540);
+  const S = 1.8;
+  X.scale(S, S);
+
+  // Glow lines
+  const glowAlpha = 0.6 + Math.sin(time*3)*0.3;
+  X.strokeStyle = COL.bubble;
+  X.lineWidth = 2.2;
+  X.lineCap = 'round';
+  X.globalAlpha = opacity * glowAlpha;
+  for(let i=0;i<4;i++){
+    const gx = -55 + i*13;
+    X.beginPath(); X.moveTo(gx, -40); X.lineTo(gx, -52 - Math.sin(time*3+i)*3); X.stroke();
+  }
+  X.globalAlpha = opacity;
+
+  // Bubble
+  X.fillStyle = COL.bubble;
+  X.strokeStyle = COL.bodyStroke;
+  X.lineWidth = 2.5;
+  roundRect(-65, -60, 55, 30, 10);
+  X.fill(); X.stroke();
+
+  // Pointer
+  X.beginPath();
+  X.moveTo(-35, -30); X.lineTo(-30, -18); X.lineTo(-25, -30);
+  X.fillStyle = COL.bubble; X.fill();
+  X.strokeStyle = COL.bodyStroke; X.lineWidth = 2.5; X.stroke();
+  // Cover internal line
+  X.fillStyle = COL.bubble;
+  X.fillRect(-36, -32, 14, 5);
+
+  // Text
+  X.fillStyle = COL.bodyStroke;
+  X.font = '800 13px "PingFang SC","Noto Sans SC",sans-serif';
+  X.textAlign = 'center';
+  X.fillText('值守', -37.5, -39);
+  X.textAlign = 'start';
+
+  X.restore();
+}
+
+// Draw float robot (upright, hovering)
+function drawFloatRobot(opacity=1, offsetY=0, flameScale=1, capeAngle=0){
+  X.save();
+  X.globalAlpha = opacity;
+  X.translate(CX, 340 + offsetY);
+  const S = 1.7;
+  X.scale(S, S);
+
+  // Shadow on ground (far below)
+  const shadowDist = 200 - offsetY;
+  X.fillStyle = `rgba(0,0,0,${0.04*clamp(1-offsetY/200,0,1)})`;
+  drawEllipse(0, shadowDist/S, 40, 8);
+  X.fill();
+
+  // Cape (behind)
+  X.save();
+  X.rotate(capeAngle * Math.PI/180);
+  X.fillStyle = COL.cape;
+  X.strokeStyle = COL.bodyStroke;
+  X.lineWidth = 3;
+  // Left cape
+  X.beginPath();
+  X.moveTo(-25, 15);
+  X.quadraticCurveTo(-50, 50, -60, 80);
+  X.quadraticCurveTo(-45, 65, -35, 80);
+  X.quadraticCurveTo(-28, 50, -25, 35);
+  X.closePath();
+  X.fill(); X.stroke();
+  // Right cape
+  X.beginPath();
+  X.moveTo(25, 15);
+  X.quadraticCurveTo(50, 50, 60, 80);
+  X.quadraticCurveTo(45, 65, 35, 80);
+  X.quadraticCurveTo(28, 50, 25, 35);
+  X.closePath();
+  X.fill(); X.stroke();
+  X.restore();
+
+  // Propulsion flames
+  X.save();
+  X.scale(1, flameScale);
+  const now = performance.now()/1000;
+  // Main flame
+  const fGrad = X.createLinearGradient(0, 45, 0, 45+60*flameScale);
+  fGrad.addColorStop(0, COL.flame1);
+  fGrad.addColorStop(0.5, COL.flame2);
+  fGrad.addColorStop(1, 'rgba(255,107,90,0)');
+  X.fillStyle = fGrad;
+  X.beginPath();
+  X.moveTo(-15, 45);
+  X.quadraticCurveTo(-20 + Math.sin(now*12)*3, 45+30*flameScale, -8, 45+55*flameScale);
+  X.quadraticCurveTo(0, 45+65*flameScale, 8, 45+55*flameScale);
+  X.quadraticCurveTo(20 + Math.sin(now*12+1)*3, 45+30*flameScale, 15, 45);
+  X.closePath();
+  X.fill();
+  // Side flames
+  X.fillStyle = fGrad;
+  X.globalAlpha = opacity * 0.6;
+  X.beginPath();
+  X.ellipse(-12, 55, 8, 15*flameScale, 0, 0, Math.PI*2);
+  X.fill();
+  X.beginPath();
+  X.ellipse(12, 55, 8, 15*flameScale, 0, 0, Math.PI*2);
+  X.fill();
+  X.globalAlpha = opacity;
+  X.restore();
+
+  // Feet
+  X.fillStyle = COL.hand;
+  X.strokeStyle = COL.bodyStroke;
+  X.lineWidth = 2.8;
+  drawEllipse(-15, 42, 11, 7); X.fill(); X.stroke();
+  drawEllipse(15, 42, 11, 7); X.fill(); X.stroke();
+
+  // Body
+  X.fillStyle = COL.body;
+  X.strokeStyle = COL.bodyStroke;
+  X.lineWidth = 3.5;
+  drawEllipse(0, 15, 35, 35); X.fill(); X.stroke();
+
+  // Shield on chest
+  X.fillStyle = COL.eye;
+  X.strokeStyle = COL.bodyStroke;
+  X.lineWidth = 2.5;
+  X.beginPath();
+  X.moveTo(-12, 0); X.lineTo(0, -8); X.lineTo(12, 0); X.lineTo(12, 15);
+  X.quadraticCurveTo(0, 22, -12, 15);
+  X.closePath();
+  X.fill(); X.stroke();
+  // Checkmark
+  X.strokeStyle = COL.bodyStroke;
+  X.lineWidth = 2.8;
+  X.lineCap = 'round';
+  X.lineJoin = 'round';
+  X.beginPath();
+  X.moveTo(-5, 7); X.lineTo(-1, 12); X.lineTo(7, 2);
+  X.stroke();
+
+  // Arms
+  X.fillStyle = COL.hand;
+  X.strokeStyle = COL.bodyStroke;
+  X.lineWidth = 2.8;
+  X.lineCap = 'round';
+  drawEllipse(-30, 10, 10, 8); X.fill(); X.stroke();
+  drawEllipse(30, 10, 10, 8); X.fill(); X.stroke();
+
+  // Head
+  X.fillStyle = COL.body;
+  X.strokeStyle = COL.bodyStroke;
+  X.lineWidth = 3.5;
+  roundRect(-48, -55, 96, 52, 26);
+  X.fill(); X.stroke();
+
+  // Face screen
+  X.fillStyle = COL.screen;
+  roundRect(-35, -45, 70, 32, 16);
+  X.fill();
+
+  // Open eyes (bright)
+  X.fillStyle = COL.eye;
+  roundRect(-24, -40, 16, 22, 8);
+  X.fill();
+  roundRect(8, -40, 16, 22, 8);
+  X.fill();
+
+  // Eye highlights
+  X.fillStyle = COL.white;
+  X.globalAlpha = opacity * 0.75;
+  roundRect(-21, -38, 5, 6, 2.5); X.fill();
+  roundRect(11, -38, 5, 6, 2.5); X.fill();
+  X.globalAlpha = opacity;
+
+  // Antenna
+  X.strokeStyle = COL.bodyStroke;
+  X.lineWidth = 3;
+  X.lineCap = 'round';
+  X.beginPath(); X.moveTo(0, -55); X.lineTo(0, -70); X.stroke();
+  X.fillStyle = '#FFF2D7';
+  X.strokeStyle = COL.bodyStroke;
+  X.lineWidth = 2.5;
+  X.beginPath(); X.arc(0, -75, 6, 0, Math.PI*2); X.fill(); X.stroke();
+  // Antenna glow
+  X.fillStyle = COL.eye;
+  X.globalAlpha = opacity * 0.3;
+  X.beginPath(); X.arc(0, -75, 12, 0, Math.PI*2); X.fill();
+  X.globalAlpha = opacity;
+
+  // Ear bumps
+  X.fillStyle = '#FFF4DF';
+  X.strokeStyle = COL.bodyStroke;
+  X.lineWidth = 2.8;
+  X.beginPath(); X.arc(-48, -30, 9, 0, Math.PI*2); X.fill(); X.stroke();
+  X.beginPath(); X.arc(48, -30, 9, 0, Math.PI*2); X.fill(); X.stroke();
+
+  X.restore();
+}
+
+// Draw glow ring
+function drawGlowRing(opacity=1, scale=1){
+  if(opacity < 0.01) return;
+  X.save();
+  X.globalAlpha = opacity;
+  X.translate(CX, 340);
+  X.scale(scale, scale);
+
+  // Outer ring
+  X.strokeStyle = COL.eye;
+  X.lineWidth = 3;
+  X.globalAlpha = opacity * 0.25;
+  X.beginPath(); X.arc(0, 0, 110, 0, Math.PI*2); X.stroke();
+
+  // Glow fill
+  const grd = X.createRadialGradient(0,0,50,0,0,110);
+  grd.addColorStop(0, 'rgba(255,225,90,0.12)');
+  grd.addColorStop(1, 'rgba(255,225,90,0)');
+  X.fillStyle = grd;
+  X.globalAlpha = opacity * 0.6;
+  X.beginPath(); X.arc(0, 0, 110, 0, Math.PI*2); X.fill();
+
+  X.restore();
+}
+
+// Draw stars
+function drawStars(opacity=1, time=0){
+  if(opacity < 0.01) return;
+  X.save();
+  X.globalAlpha = opacity;
+  const positions = [
+    [-140,-80], [150,-60], [-160,30], [160,60], [-120,120], [130,-130],
+    [-80,-140], [100,130], [170,0], [-170,-20]
+  ];
+  positions.forEach(([px,py],i) => {
+    const a = 0.3 + Math.sin(time*2 + i*1.7)*0.4;
+    const s = 3 + Math.sin(time*1.5 + i*2.3)*1.5;
+    X.globalAlpha = opacity * clamp(a, 0, 1);
+    X.fillStyle = COL.star;
+    // 4-point star
+    X.translate(CX+px, CY-40+py);
+    X.beginPath();
+    X.moveTo(0,-s); X.lineTo(s*.3, -s*.3); X.lineTo(s, 0);
+    X.lineTo(s*.3, s*.3); X.lineTo(0, s); X.lineTo(-s*.3, s*.3);
+    X.lineTo(-s, 0); X.lineTo(-s*.3, -s*.3);
+    X.closePath(); X.fill();
+    X.translate(-(CX+px), -(CY-40+py));
+  });
+  X.restore();
+}
+
+// Draw ground
+function drawGround(opacity=1){
+  if(opacity < 0.01) return;
+  X.save();
+  X.globalAlpha = opacity;
+  X.strokeStyle = COL.ground;
+  X.lineWidth = 5;
+  X.lineCap = 'round';
+  X.beginPath();
+  X.moveTo(80, 700);
+  X.lineTo(760, 700);
+  X.stroke();
+  X.restore();
+}
+
+// ===== PARTICLES DRAW =====
+function drawParticles(){
+  particles.forEach(p => {
+    if(!p.alive) return;
+    X.globalAlpha = p.alpha * 0.8;
+    X.fillStyle = p.color;
+    X.beginPath();
+    X.arc(p.x, p.y, p.size * p.alpha, 0, Math.PI*2);
+    X.fill();
+  });
+  X.globalAlpha = 1;
+}
+
+// ===== MAIN RENDER =====
+let renderState = {
+  sleepOp: 1, sleepY: 0, eyeOpen: 0, blanketOp: 1,
+  zzzOp: 1, bubbleOp: 1,
+  floatOp: 0, floatY: 0, flameScale: 0.3, capeAngle: 0,
+  glowOp: 0, glowScale: 0.5,
+  starOp: 0,
+  groundOp: 1,
+};
+
+function render(){
+  X.clearRect(0,0,W,H);
+
+  // Background
+  const bg = X.createRadialGradient(CX, CY, 0, CX, CY, 500);
+  bg.addColorStop(0, '#FFFDF5');
+  bg.addColorStop(1, '#FFF0CC');
+  X.fillStyle = bg;
+  X.fillRect(0,0,W,H);
+
+  const rs = renderState;
+  const now = performance.now()/1000;
+
+  // Ground
+  drawGround(rs.groundOp);
+
+  // Glow ring (behind robot)
+  drawGlowRing(rs.glowOp, rs.glowScale);
+
+  // Stars
+  drawStars(rs.starOp, now);
+
+  // Float robot (behind or in front depending on state)
+  if(rs.floatOp > 0.01){
+    drawFloatRobot(rs.floatOp, rs.floatY, rs.flameScale, rs.capeAngle);
+  }
+
+  // Sleep robot
+  if(rs.sleepOp > 0.01){
+    drawSleepRobot(rs.sleepOp, rs.sleepY, rs.eyeOpen, rs.blanketOp);
+    drawZzz(rs.zzzOp, now);
+    drawBubble(rs.bubbleOp, now);
+  }
+
+  // Particles on top
+  drawParticles();
+}
+
+// ===== ANIMATION SEQUENCER =====
+function anim(dur, fn){
+  return new Promise(res => {
+    const s = performance.now();
+    function f(now){
+      const p = clamp((now-s)/dur, 0, 1);
+      fn(p);
+      if(p<1) requestAnimationFrame(f); else res();
+    }
+    requestAnimationFrame(f);
+  });
+}
+
+const setDots = (...ids) => {
+  for(let i=1;i<=5;i++) document.getElementById('d'+i).classList.toggle('on', ids.includes(i));
+};
+
+// ===== Sleep → Float =====
+async function goUp(){
+  if(busy) return;
+  busy = true; state = 'up';
+  bUp.disabled = true; bDn.disabled = true;
+  const rs = renderState;
+
+  // Phase 1: Wake up (0.5s) - Zzz fades, eyes start opening
+  info.textContent = '唤醒中...';
+  setDots(2);
+  await anim(500, p => {
+    const e = ease.inOut(p);
+    rs.zzzOp = 1 - e;
+    rs.bubbleOp = 1 - e * 0.5;
+    rs.eyeOpen = e * 0.4; // eyes crack open
+    rs.sleepY = -3 * e;
+  });
+
+  // Phase 2: Stand up (0.4s) - blanket pulls back, eyes fully open
+  info.textContent = '起床！';
+  await anim(400, p => {
+    const e = ease.inOut(p);
+    rs.blanketOp = 1 - e;
+    rs.eyeOpen = 0.4 + e * 0.6; // eyes fully open
+    rs.sleepY = -10 * e;
+  });
+
+  // Phase 3: Ignite & transition (0.6s) - sleep fades, float appears with flames
+  info.textContent = '点火起飞！';
+  setDots(2, 3);
+  // Spawn some initial flames
+  emitFlame(CX, 650, 5);
+
+  await anim(600, p => {
+    const e = ease.inOut(p);
+    rs.sleepOp = 1 - e;
+    rs.bubbleOp = (1-e)*0.5;
+    rs.floatOp = e;
+    rs.floatY = 80 * (1 - e); // float starts below
+    rs.flameScale = 0.3 + e * 1.5; // flames grow
+    rs.capeAngle = -10 * e;
+    rs.groundOp = 1 - e * 0.3;
+    rs.sleepY = -10 - 20 * e;
+
+    if(e > 0.3) emitFlame(CX, 650 - rs.floatY, 2);
+  });
+
+  // Phase 4: Launch upward (0.8s) - fly up with big flames
+  info.textContent = '升空！';
+  await anim(800, p => {
+    const e = ease.out(p);
+    rs.floatY = lerp(80, -100, e);
+    rs.flameScale = 1.8 - e * 0.8; // flames shrink as it stabilizes
+    rs.capeAngle = lerp(-10, 0, e);
+
+    // Emit particles
+    if(Math.random() < 0.4) emitFlame(CX, 340 + rs.floatY + 80, 2);
+    if(Math.random() < 0.2) emitStar(CX, 340 + rs.floatY);
+  });
+
+  // Phase 5: Arrive & settle (0.5s) - bounce into hover position
+  info.textContent = '进入值守...';
+  setDots(3);
+  await anim(500, p => {
+    const e = ease.outBounce(p);
+    rs.floatY = lerp(-100, 0, e);
+    rs.flameScale = lerp(1.0, 0.6, e); // idle flame size
+    rs.glowOp = ease.out(p);
+    rs.glowScale = lerp(0.5, 1, ease.out(p));
+    rs.starOp = ease.out(p);
+
+    if(Math.random() < 0.15) emitStar(CX, 340);
+  });
+
+  // Done
+  rs.sleepOp = 0; rs.floatOp = 1; rs.floatY = 0;
+  rs.zzzOp = 0; rs.bubbleOp = 0; rs.blanketOp = 0; rs.eyeOpen = 1;
+  rs.flameScale = 0.6; rs.capeAngle = 0;
+  rs.glowOp = 1; rs.glowScale = 1; rs.starOp = 1; rs.groundOp = 0.7;
+  state = 'float'; busy = false;
+  info.textContent = '悬浮值守中 ⚡';
+  setDots(3);
+  bDn.disabled = false;
+}
+
+// ===== Float → Sleep =====
+async function goDn(){
+  if(busy) return;
+  busy = true; state = 'down';
+  bUp.disabled = true; bDn.disabled = true;
+  const rs = renderState;
+
+  // Phase 1: Glow fades, engine slows (0.4s)
+  info.textContent = '准备降落...';
+  setDots(4);
+  await anim(400, p => {
+    const e = ease.inOut(p);
+    rs.glowOp = 1 - e;
+    rs.starOp = 1 - e * 0.5;
+    rs.flameScale = 0.6 - e * 0.3; // engine throttles down
+  });
+
+  // Phase 2: Descend (0.7s) - fall down with shrinking flames
+  info.textContent = '下降中...';
+  await anim(700, p => {
+    const e = ease.in(p);
+    rs.floatY = lerp(0, 120, e);
+    rs.flameScale = lerp(0.3, 0.08, e); // flames almost gone
+    rs.capeAngle = lerp(0, 15, e); // cape catches air
+    rs.groundOp = lerp(0.7, 1, e);
+
+    if(Math.random() < 0.2) emitFlame(CX, 340 + rs.floatY + 70, 1);
+  });
+
+  // Phase 3: Landing impact (0.35s)
+  info.textContent = '着陆！';
+  setDots(4, 5);
+  emitDust(CX, 690);
+
+  await anim(350, p => {
+    const e = ease.outBounce(p);
+    rs.floatY = lerp(120, 150, e);
+    rs.flameScale = 0;
+    rs.floatOp = 1 - clamp(e*2, 0, 1); // float robot fades
+    rs.sleepOp = clamp(e*2 - 0.5, 0, 1); // sleep robot appears
+    rs.blanketOp = clamp(e*2 - 0.5, 0, 1);
+    rs.eyeOpen = 1 - clamp(e*1.5, 0, 1); // eyes close
+  });
+
+  // Phase 4: Settle into sleep (0.5s)
+  info.textContent = '入睡中...';
+  await anim(500, p => {
+    const e = ease.inOut(p);
+    rs.floatOp = 0;
+    rs.sleepOp = 1;
+    rs.zzzOp = e;
+    rs.bubbleOp = e;
+    rs.eyeOpen = 0;
+    rs.blanketOp = 1;
+    rs.floatY = 0;
+    rs.sleepY = lerp(10, 0, e);
+    rs.starOp = 1 - e;
+    rs.groundOp = 1;
+  });
+
+  // Done
+  rs.sleepOp = 1; rs.floatOp = 0; rs.floatY = 0;
+  rs.zzzOp = 1; rs.bubbleOp = 1; rs.blanketOp = 1; rs.eyeOpen = 0;
+  rs.flameScale = 0; rs.capeAngle = 0;
+  rs.glowOp = 0; rs.glowScale = 0.5; rs.starOp = 0; rs.groundOp = 1;
+  rs.sleepY = 0;
+  state = 'sleep'; busy = false;
+  info.textContent = '当前：睡觉中 zzz';
+  setDots(5, 1);
+  bUp.disabled = false;
+}
+
+// ===== FLOAT IDLE ANIMATION =====
+function updateFloatIdle(time){
+  if(state !== 'float' || busy) return;
+  const rs = renderState;
+  rs.floatY = Math.sin(time * 1.5) * 8;
+  rs.flameScale = 0.55 + Math.sin(time * 6) * 0.12;
+  rs.capeAngle = Math.sin(time * 2) * 4;
+  rs.glowScale = 1 + Math.sin(time * 1.2) * 0.04;
+
+  // Occasional star sparkle
+  if(Math.random() < 0.02) emitStar(CX, 340);
+}
+
+// ===== GAME LOOP =====
+let lastTime = 0;
+function loop(now){
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+  t += dt;
+
+  // Update particles
+  particles.forEach(p => p.update(dt));
+  particles = particles.filter(p => p.alive);
+
+  // Float idle
+  updateFloatIdle(t);
+
+  // Sleep idle (breathing)
+  if(state === 'sleep' && !busy){
+    renderState.sleepY = Math.sin(t * 1.2) * 3;
+  }
+
+  render();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// ===== EVENTS =====
+bUp.addEventListener('click', goUp);
+bDn.addEventListener('click', goDn);
+
+document.getElementById('wrap').addEventListener('dblclick', () => {
+  autoLoop = !autoLoop;
+  info.textContent += autoLoop ? ' [自动循环]' : '';
+  if(autoLoop) runLoop();
+});
+
+async function runLoop(){
+  while(autoLoop){
+    if(state==='sleep' && !busy){ await goUp(); await new Promise(r=>setTimeout(r,1800)); }
+    if(state==='float' && !busy){ await goDn(); await new Promise(r=>setTimeout(r,1800)); }
+    await new Promise(r=>setTimeout(r,200));
+  }
+}
+
+// ===== EXPORT: Record as WebM =====
+let recorder = null;
+let recordedChunks = [];
+window.startRecord = function(){
+  const stream = C.captureStream(30);
+  recorder = new MediaRecorder(stream, {mimeType:'video/webm;codecs=vp9'});
+  recordedChunks = [];
+  recorder.ondataavailable = e => { if(e.data.size>0) recordedChunks.push(e.data); };
+  recorder.onstop = () => {
+    const blob = new Blob(recordedChunks, {type:'video/webm'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'robot-animation.webm'; a.click();
+    URL.revokeObjectURL(url);
+    console.log('Recording saved!');
+  };
+  recorder.start();
+  console.log('Recording started... click window.stopRecord() to save');
+};
+window.stopRecord = function(){
+  if(recorder && recorder.state==='recording') recorder.stop();
+};
+</script>
+</body>
+</html>

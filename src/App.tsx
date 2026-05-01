@@ -51,11 +51,8 @@ const MIN_LOG_WIDTH = 320;
 const MAX_LOG_WIDTH = 720;
 const STATS_STORAGE_KEY = 'vision-cs-dashboard-stats';
 const DEFAULT_OPENCLAW_CLI_PATH = '/opt/homebrew/bin/openclaw';
-const GUARD_ANIMATION_TOTAL_FRAMES = 90;
 const GUARD_OFF_LAYOUT = { right: -38, bottom: 99, size: 190 };
 const GUARD_ON_LAYOUT = { top: 128, right: -24, size: 135 };
-const GUARD_FLIGHT_ON_SIZE = 180;
-const GUARD_FLIGHT_ON_RIGHT = -32;
 const EMPTY_DASHBOARD_STATS: DashboardStats = {
   keywordHits: 0,
   visionRecognitions: 0,
@@ -64,10 +61,6 @@ const EMPTY_DASHBOARD_STATS: DashboardStats = {
 };
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
-const easeInOutCubic = (value: number) => {
-  const t = clamp(value, 0, 1);
-  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-};
 
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const monthKey = () => todayKey().slice(0, 7);
@@ -276,8 +269,9 @@ export default function App() {
   const [confirmingReply, setConfirmingReply] = useState(false);
   const [guardEnabled, setGuardEnabled] = useState(false);
   const [guardSaving, setGuardSaving] = useState(false);
-  const [guardAnimation, setGuardAnimation] = useState<{ direction: 'up' | 'down'; frame: number } | null>(null);
-  const guardAnimationFrameRef = useRef<number | null>(null);
+  const [guardBumpKey, setGuardBumpKey] = useState(0);
+  const [guardBumping, setGuardBumping] = useState(false);
+  const guardBumpTimerRef = useRef<number | null>(null);
   const paneSyncRef = useRef(false);
   const paneSyncTimerRef = useRef<number | null>(null);
   const resizeRef = useRef<null | {
@@ -325,38 +319,27 @@ export default function App() {
     }
   }, []);
 
-  const stopGuardIconAnimation = useCallback(() => {
-    if (guardAnimationFrameRef.current !== null) {
-      window.cancelAnimationFrame(guardAnimationFrameRef.current);
-      guardAnimationFrameRef.current = null;
+  const playGuardBump = useCallback(() => {
+    if (guardBumpTimerRef.current !== null) {
+      window.clearTimeout(guardBumpTimerRef.current);
     }
-  }, []);
-
-  const runGuardIconAnimation = useCallback((direction: 'up' | 'down') => {
-    stopGuardIconAnimation();
-    return new Promise<void>((resolve) => {
-      let frame = 0;
-      setGuardAnimation({ direction, frame });
-      const tick = () => {
-        frame += 1;
-        setGuardAnimation({ direction, frame });
-        if (frame >= GUARD_ANIMATION_TOTAL_FRAMES) {
-          guardAnimationFrameRef.current = null;
-          setGuardAnimation(null);
-          resolve();
-          return;
-        }
-        guardAnimationFrameRef.current = window.requestAnimationFrame(tick);
-      };
-      guardAnimationFrameRef.current = window.requestAnimationFrame(tick);
+    setGuardBumping(false);
+    setGuardBumpKey((value) => value + 1);
+    window.requestAnimationFrame(() => {
+      setGuardBumping(true);
     });
-  }, [stopGuardIconAnimation]);
+    guardBumpTimerRef.current = window.setTimeout(() => {
+      setGuardBumping(false);
+      guardBumpTimerRef.current = null;
+    }, 2000);
+  }, []);
 
   const handleToggleGuard = useCallback(async () => {
     if (guardSaving || !window.electronAPI?.loadConfig || !window.electronAPI?.saveConfig) return;
     const nextEnabled = !guardEnabled;
     setGuardSaving(true);
-    const animationPromise = runGuardIconAnimation(nextEnabled ? 'up' : 'down');
+    setGuardEnabled(nextEnabled);
+    playGuardBump();
     try {
       const loaded = await window.electronAPI.loadConfig();
       const flat = flattenLoadedConfig(loaded || {});
@@ -375,31 +358,38 @@ export default function App() {
       };
       const success = await window.electronAPI.saveConfig(nextConfig);
       if (!success) throw new Error('保存值守设置失败');
-      await animationPromise;
-      setGuardEnabled(nextEnabled);
     } catch (e) {
-      stopGuardIconAnimation();
+      setGuardEnabled(!nextEnabled);
+      playGuardBump();
       setEvents((prev) => [...prev.slice(-100), {
         type: 'log',
         data: { level: 'error', message: `值守切换失败: ${e}` },
       }]);
-      setGuardAnimation(null);
     } finally {
       setGuardSaving(false);
     }
-  }, [guardEnabled, guardSaving, runGuardIconAnimation, stopGuardIconAnimation]);
+  }, [guardEnabled, guardSaving, playGuardBump]);
 
   useEffect(() => {
     refreshGuardState();
+    const removeConfigUpdatedListener = window.electronAPI?.onConfigUpdated?.((config) => {
+      setGuardEnabled(Boolean(config?.ocr?.guard_enabled));
+    });
     window.addEventListener('focus', refreshGuardState);
     document.addEventListener('visibilitychange', refreshGuardState);
     return () => {
+      removeConfigUpdatedListener?.();
       window.removeEventListener('focus', refreshGuardState);
       document.removeEventListener('visibilitychange', refreshGuardState);
     };
   }, [refreshGuardState]);
 
-  useEffect(() => stopGuardIconAnimation, [stopGuardIconAnimation]);
+  useEffect(() => () => {
+    if (guardBumpTimerRef.current !== null) {
+      window.clearTimeout(guardBumpTimerRef.current);
+    }
+    setGuardBumping(false);
+  }, []);
 
   const openLogDrawer = useCallback(() => {
     setLogDrawerOpen(true);
@@ -614,34 +604,7 @@ export default function App() {
     }
   };
 
-  const guardToggleStyle = (() => {
-    if (tab !== 'home' || !guardAnimation) return undefined;
-    const appHeight = document.querySelector('.app')?.clientHeight || window.innerHeight || 740;
-    const offLayout = {
-      top: appHeight - GUARD_OFF_LAYOUT.bottom - GUARD_OFF_LAYOUT.size,
-      right: GUARD_OFF_LAYOUT.right,
-      size: GUARD_OFF_LAYOUT.size,
-    };
-    const onLayout = {
-      top: GUARD_ON_LAYOUT.top,
-      right: GUARD_FLIGHT_ON_RIGHT,
-      size: GUARD_FLIGHT_ON_SIZE,
-    };
-    const from = guardAnimation.direction === 'up' ? offLayout : onLayout;
-    const to = guardAnimation.direction === 'up' ? onLayout : offLayout;
-    const t = easeInOutCubic(guardAnimation.frame / GUARD_ANIMATION_TOTAL_FRAMES);
-    const interpolate = (start: number, end: number) => start + (end - start) * t;
-    const size = interpolate(from.size, to.size);
-    return {
-      top: `${interpolate(from.top, to.top)}px`,
-      right: `${interpolate(from.right, to.right)}px`,
-      bottom: 'auto',
-      width: `${size}px`,
-      height: `${size}px`,
-    } as React.CSSProperties;
-  })();
   const showGuardActiveIcon = tab === 'home' && guardEnabled;
-  const showGuardFlightIcon = tab === 'home' && Boolean(guardAnimation);
   const showGuardToggle = tab === 'home' || !guardEnabled;
 
   return (
@@ -689,21 +652,20 @@ export default function App() {
             onMouseDown={(event) => startPaneResize('main', event)}
           />
           <div className="asset-preload" aria-hidden="true">
-            <img src="assets/fly-bot.png" alt="" />
             <img src="assets/sleep-bot.png" alt="" />
             <img src="assets/bot-tubiao.png" alt="" />
           </div>
           {showGuardToggle && (
             <button
-              className={`guard-toggle ${showGuardActiveIcon ? 'is-on' : 'is-off'} ${showGuardFlightIcon && guardAnimation ? `is-animating is-${guardAnimation.direction}` : ''} ${tab !== 'home' ? 'is-decorative' : ''}`}
-              style={guardToggleStyle}
+              key={`${showGuardActiveIcon ? 'on' : 'off'}-${guardBumpKey}`}
+              className={`guard-toggle ${showGuardActiveIcon ? 'is-on' : 'is-off'} ${guardBumping && tab === 'home' ? 'is-bumping' : ''} ${tab !== 'home' ? 'is-decorative' : ''}`}
               type="button"
               onClick={handleToggleGuard}
               disabled={guardSaving || tab !== 'home'}
               title={tab === 'home' ? (guardEnabled ? '关闭值守' : '开启值守') : '值守入口在首页'}
               aria-label={tab === 'home' ? (guardEnabled ? '关闭值守' : '开启值守') : '值守入口在首页'}
             >
-                <img src={`assets/${showGuardFlightIcon ? 'fly-bot.png' : (showGuardActiveIcon ? 'bot-tubiao.png' : 'sleep-bot.png')}`} alt="" aria-hidden="true" />
+                <img src={`assets/${showGuardActiveIcon ? 'bot-tubiao.png' : 'sleep-bot.png'}`} alt="" aria-hidden="true" />
               </button>
           )}
           <div className="action-bar">

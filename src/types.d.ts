@@ -1,6 +1,7 @@
 interface ElectronAPI {
   onAgentEvent: (callback: (event: any) => void) => void;
   onPaneLayoutChanged: (callback: (layout: { mainWidth?: number; drawerWidth?: number; drawerOpen?: boolean }) => void) => () => void;
+  onConfigUpdated: (callback: (config: any) => void) => () => void;
   removeAgentEventListener: () => void;
   startAgent: () => void;
   stopAgent: () => void;

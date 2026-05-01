@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Easing,
   FlatList,
   Image,
   Pressable,
@@ -13,21 +14,12 @@ import {
   Switch,
   Text,
   TextInput,
-  useWindowDimensions,
   View,
 } from 'react-native';
 
 const appLogo = require('./assets/app-logo.png');
 const guardLogo = require('./assets/bot-tubiao.png');
 const sleepGuardLogo = require('./assets/sleep-bot.png');
-const flyGuardLogo = require('./assets/fly-bot.png');
-const GUARD_ANIMATION_TOTAL_FRAMES = 90;
-
-const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
-const easeInOutCubic = (value: number) => {
-  const t = clamp(value, 0, 1);
-  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-};
 
 type Tab = 'home' | 'logs' | 'workflow' | 'connect';
 type StatsRange = 'day' | 'month' | 'year' | 'total';
@@ -222,7 +214,6 @@ function mergeStats(primary: DashboardStats, fallback: DashboardStats): Dashboar
 }
 
 export default function App() {
-  const { height: windowHeight } = useWindowDimensions();
   const [tab, setTab] = useState<Tab>('home');
   const [serviceUrl, setServiceUrl] = useState('');
   const [token, setToken] = useState('');
@@ -241,17 +232,24 @@ export default function App() {
   const [workflowLoading, setWorkflowLoading] = useState(false);
   const [workflowSaving, setWorkflowSaving] = useState(false);
   const [guardSaving, setGuardSaving] = useState(false);
-  const [guardFlying, setGuardFlying] = useState(false);
   const [lastHeartbeatAt, setLastHeartbeatAt] = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const lastHeartbeatRef = useRef<number | null>(null);
-  const guardAnimationFrameRef = useRef<number | null>(null);
-  const guardMotion = useRef(new Animated.Value(defaultWorkflowConfig.ocr.guard_enabled ? 1 : 0)).current;
+  const heartbeatFailuresRef = useRef(0);
+  const guardBumpMotion = useRef(new Animated.Value(0)).current;
 
   const markHeartbeat = useCallback(() => {
     const now = Date.now();
+    heartbeatFailuresRef.current = 0;
     lastHeartbeatRef.current = now;
     setLastHeartbeatAt(now);
+  }, []);
+
+  const markHeartbeatFailure = useCallback(() => {
+    heartbeatFailuresRef.current += 1;
+    if (heartbeatFailuresRef.current >= 5) {
+      setConnected(false);
+    }
   }, []);
 
   const authedHeaders = useMemo(() => ({
@@ -278,6 +276,9 @@ export default function App() {
     const body = await request('/api/dashboard', { headers: authedHeaders });
     setDashboard(body);
     setPendingReplies(Array.isArray(body.pendingReplies) ? body.pendingReplies : []);
+    if (body.config && !guardSaving) {
+      setWorkflowConfig({ ...defaultWorkflowConfig, ...(body.config || {}) });
+    }
     if (Array.isArray(body.latestEvents) && body.latestEvents.length > 0) {
       setEvents((prev) => {
         const seen = new Set(prev.map((event) => event.id || `${event.ts}-${event.type}-${eventBody(event)}`));
@@ -287,7 +288,7 @@ export default function App() {
     }
     setConnected(true);
     markHeartbeat();
-  }, [authedHeaders, markHeartbeat, request, serviceUrl, token]);
+  }, [authedHeaders, guardSaving, markHeartbeat, request, serviceUrl, token]);
 
   const refreshEvents = useCallback(async () => {
     if (!serviceUrl || !token) return;
@@ -338,32 +339,19 @@ export default function App() {
     };
   };
 
-  const stopGuardAnimation = () => {
-    if (guardAnimationFrameRef.current !== null) {
-      cancelAnimationFrame(guardAnimationFrameRef.current);
-      guardAnimationFrameRef.current = null;
-    }
+  const playGuardBump = () => {
+    guardBumpMotion.stopAnimation();
+    guardBumpMotion.setValue(0);
+    Animated.timing(guardBumpMotion, {
+      toValue: 1,
+      duration: 2000,
+      easing: Easing.linear,
+      useNativeDriver: true,
+    }).start(() => guardBumpMotion.setValue(0));
   };
 
-  const runGuardAnimation = (toValue: number) => {
-    stopGuardAnimation();
-    return new Promise<void>((resolve) => {
-      let frame = 0;
-      const startValue = workflowConfig.ocr.guard_enabled ? 1 : 0;
-      const tick = () => {
-        frame += 1;
-        const t = easeInOutCubic(frame / GUARD_ANIMATION_TOTAL_FRAMES);
-        guardMotion.setValue(startValue + (toValue - startValue) * t);
-        if (frame >= GUARD_ANIMATION_TOTAL_FRAMES) {
-          guardAnimationFrameRef.current = null;
-          resolve();
-          return;
-        }
-        guardAnimationFrameRef.current = requestAnimationFrame(tick);
-      };
-      guardMotion.setValue(startValue);
-      guardAnimationFrameRef.current = requestAnimationFrame(tick);
-    });
+  const playGuardBumpAfterLayout = () => {
+    requestAnimationFrame(playGuardBump);
   };
 
   const toggleGuardFromHome = async () => {
@@ -376,35 +364,28 @@ export default function App() {
     const nextEnabled = !workflowConfig.ocr.guard_enabled;
     const nextConfig = getGuardConfig(previousConfig, nextEnabled);
     setGuardSaving(true);
-    setGuardFlying(true);
     setWorkflowConfig(nextConfig);
-    const animationPromise = runGuardAnimation(nextEnabled ? 1 : 0).then(() => setGuardFlying(false));
+    playGuardBumpAfterLayout();
     try {
       const body = await request('/api/config', {
         method: 'POST',
         headers: authedHeaders,
         body: JSON.stringify({ config: nextConfig }),
       });
-      await animationPromise;
       setWorkflowConfig({ ...defaultWorkflowConfig, ...(body.config || nextConfig) });
       await refreshDashboard();
     } catch (error) {
-      stopGuardAnimation();
       setWorkflowConfig(previousConfig);
-      guardMotion.setValue(previousConfig.ocr.guard_enabled ? 1 : 0);
-      setGuardFlying(false);
+      playGuardBumpAfterLayout();
       Alert.alert('切换失败', String(error instanceof Error ? error.message : error));
     } finally {
       setGuardSaving(false);
     }
   };
 
-  useEffect(() => {
-    if (guardSaving) return;
-    guardMotion.setValue(workflowConfig.ocr.guard_enabled ? 1 : 0);
-  }, [guardMotion, guardSaving, workflowConfig.ocr.guard_enabled]);
-
-  useEffect(() => () => stopGuardAnimation(), []);
+  useEffect(() => () => {
+    guardBumpMotion.stopAnimation();
+  }, [guardBumpMotion]);
 
   const saveWorkflowConfig = async () => {
     setWorkflowSaving(true);
@@ -433,8 +414,8 @@ export default function App() {
       setConnected(true);
       markHeartbeat();
     };
-    ws.onclose = () => setConnected(false);
-    ws.onerror = () => setConnected(false);
+    ws.onclose = () => markHeartbeatFailure();
+    ws.onerror = () => markHeartbeatFailure();
     ws.onmessage = (message) => {
       try {
         markHeartbeat();
@@ -461,9 +442,12 @@ export default function App() {
           }
           refreshDashboard().catch(() => {});
         }
+        if (payload.type === 'config' && payload.config && !guardSaving) {
+          setWorkflowConfig({ ...defaultWorkflowConfig, ...(payload.config || {}) });
+        }
       } catch {}
     };
-  }, [refreshDashboard, serviceUrl, token]);
+  }, [guardSaving, markHeartbeatFailure, refreshDashboard, serviceUrl, token]);
 
   useEffect(() => {
     const load = async () => {
@@ -483,22 +467,18 @@ export default function App() {
       const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('heartbeat timeout')), 5000));
       await Promise.race([refreshDashboard(), timeout]);
     };
-    heartbeat().catch(() => setConnected(false));
+    heartbeat().catch(markHeartbeatFailure);
     refreshEvents().catch(() => {});
     refreshWorkflowConfig().catch(() => {});
     connectStream();
     const timer = setInterval(() => {
-      heartbeat().catch(() => setConnected(false));
+      heartbeat().catch(markHeartbeatFailure);
     }, 8000);
-    const staleTimer = setInterval(() => {
-      setConnected((current) => current && Boolean(lastHeartbeatRef.current) && Date.now() - Number(lastHeartbeatRef.current) < 16000);
-    }, 3000);
     return () => {
       clearInterval(timer);
-      clearInterval(staleTimer);
       wsRef.current?.close();
     };
-  }, [connectStream, refreshDashboard, refreshEvents, refreshWorkflowConfig, serviceUrl, token]);
+  }, [connectStream, markHeartbeatFailure, refreshDashboard, refreshEvents, refreshWorkflowConfig, serviceUrl, token]);
 
   const saveAddress = async () => {
     const next = normalizeBaseUrl(serviceUrl);
@@ -619,30 +599,26 @@ export default function App() {
   const visibleEvents = events.filter((event) => matchesFilter(event, filter)).slice().reverse();
   const keyEvents = events.filter(isKeyHomeEvent);
   const latestKeyEvents = keyEvents.slice(-6);
-  const guardIconStyle = {
+  const showGuardActiveIcon = tab === 'home' && workflowConfig.ocr.guard_enabled;
+  const showSleepGuardIcon = !workflowConfig.ocr.guard_enabled;
+  const guardBumpStyle = {
     transform: [
       {
-        translateY: guardMotion.interpolate({
-          inputRange: [0, 1],
-          outputRange: [0, 306 - windowHeight],
+        translateY: guardBumpMotion.interpolate({
+          inputRange: [0, 0.32, 0.56, 0.76, 1],
+          outputRange: [0, -16, 14, -5, 0],
         }),
       },
       {
-        translateX: guardMotion.interpolate({
-          inputRange: [0, 1],
-          outputRange: [0, 78],
+        scaleX: guardBumpMotion.interpolate({
+          inputRange: [0, 0.32, 0.56, 0.76, 1],
+          outputRange: [1, 1.18, 1.08, 1.05, 1],
         }),
       },
       {
-        scale: guardMotion.interpolate({
-          inputRange: [0, 1],
-          outputRange: [1, 0.8],
-        }),
-      },
-      {
-        rotate: guardMotion.interpolate({
-          inputRange: [0, 1],
-          outputRange: ['0deg', '-6deg'],
+        scaleY: guardBumpMotion.interpolate({
+          inputRange: [0, 0.32, 0.56, 0.76, 1],
+          outputRange: [1, 1.18, 0.86, 1.06, 1],
         }),
       },
     ],
@@ -730,6 +706,22 @@ export default function App() {
                 <StatCard tone="reply" label="AI回复" value={visibleStats.aiReplies} hint="已生成" />
                 <StatCard tone="escalation" label="转人工" value={visibleStats.escalations} hint={visibleStats.escalations > 0 ? '需关注' : '暂无'} />
               </View>
+              {showGuardActiveIcon && (
+                <Animated.View style={[styles.guardActiveClip, guardBumpStyle]}>
+                  <Pressable
+                    onPress={toggleGuardFromHome}
+                    disabled={guardSaving}
+                    hitSlop={10}
+                    style={({ pressed }) => [
+                      styles.guardActiveButton,
+                      pressed && !guardSaving && styles.guardTogglePressed,
+                      guardSaving && styles.guardToggleSaving,
+                    ]}
+                  >
+                    <Image source={guardLogo} style={styles.guardActiveImage} />
+                  </Pressable>
+                </Animated.View>
+              )}
             </View>
 
             <View style={styles.homeChannelCard}>
@@ -920,27 +912,26 @@ export default function App() {
       {tab !== 'connect' && (
         <>
         <View style={styles.assetPreload} pointerEvents="none">
-          <Image source={flyGuardLogo} style={styles.assetPreloadImage} />
           <Image source={sleepGuardLogo} style={styles.assetPreloadImage} />
           <Image source={guardLogo} style={styles.assetPreloadImage} />
         </View>
-        <Animated.View style={[styles.guardToggleWrap, guardIconStyle]}>
+        {showSleepGuardIcon && (
+        <Animated.View style={[styles.guardToggleWrap, guardBumpStyle]}>
           <Pressable
             onPress={toggleGuardFromHome}
-            disabled={guardSaving}
+            disabled={guardSaving || tab !== 'home'}
             hitSlop={10}
             style={({ pressed }) => [
               styles.guardToggle,
-              pressed && !guardSaving && styles.guardTogglePressed,
+              pressed && !guardSaving && tab === 'home' && styles.guardTogglePressed,
               guardSaving && styles.guardToggleSaving,
+              tab !== 'home' && styles.guardToggleDecorative,
             ]}
           >
-            <Image
-              source={guardFlying ? flyGuardLogo : (workflowConfig.ocr.guard_enabled ? guardLogo : sleepGuardLogo)}
-              style={styles.guardToggleImage}
-            />
+            <Image source={sleepGuardLogo} style={styles.guardToggleImage} />
           </Pressable>
         </Animated.View>
+        )}
         <View style={styles.actionBar}>
           <Pressable
             style={[
@@ -1112,7 +1103,7 @@ const styles = StyleSheet.create({
   homeHeroStamp: { borderWidth: 3, borderColor: '#171717', backgroundColor: '#FFFDF7', borderRadius: 6, paddingHorizontal: 11, paddingVertical: 8, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 3, height: 3 }, shadowRadius: 0 },
   homeHeroStampText: { fontSize: 20, fontWeight: '900', color: '#171717' },
   homeMatrix: { gap: 10, alignItems: 'stretch' },
-  homeStatsCard: { minHeight: 232, flexDirection: 'row', overflow: 'hidden', backgroundColor: '#FFFDF7', borderWidth: 3, borderColor: '#171717', borderRadius: 8, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 3, height: 3 }, shadowRadius: 0 },
+  homeStatsCard: { position: 'relative', minHeight: 232, flexDirection: 'row', overflow: 'visible', backgroundColor: '#FFFDF7', borderWidth: 3, borderColor: '#171717', borderRadius: 8, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 3, height: 3 }, shadowRadius: 0 },
   homeStatsTabs: { width: 58, backgroundColor: '#EFE7D8', borderRightWidth: 3, borderColor: '#171717' },
   homeStatsTab: { flex: 1, alignItems: 'center', justifyContent: 'center', borderBottomWidth: 3, borderColor: '#171717', paddingVertical: 5 },
   homeStatsTabActive: { backgroundColor: '#FFFDF7' },
@@ -1143,10 +1134,14 @@ const styles = StyleSheet.create({
   actionBar: { flexDirection: 'row', gap: 10, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 10, borderTopWidth: 2, borderColor: '#171717', backgroundColor: '#FFFDF7', overflow: 'visible' },
   assetPreload: { position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' },
   assetPreloadImage: { width: 1, height: 1 },
-  guardToggleWrap: { position: 'absolute', right: -46, bottom: 64, width: 188, height: 188, zIndex: 30 },
+  guardToggleWrap: { position: 'absolute', right: -46, bottom: 86, width: 188, height: 188, zIndex: 30 },
   guardToggle: { width: 188, height: 188, alignItems: 'center', justifyContent: 'center' },
+  guardActiveClip: { position: 'absolute', right: -25, top: -96, width: 138, height: 138, overflow: 'visible', zIndex: 6 },
+  guardActiveButton: { width: 138, height: 138, alignItems: 'center', justifyContent: 'center' },
+  guardActiveImage: { width: '100%', height: '100%', resizeMode: 'contain' },
   guardTogglePressed: { transform: [{ translateY: -2 }, { rotate: '-3deg' }] },
-  guardToggleSaving: { opacity: 0.82 },
+  guardToggleSaving: { opacity: 1 },
+  guardToggleDecorative: { opacity: 1 },
   guardToggleImage: { width: '100%', height: '100%', resizeMode: 'contain' },
   actionButton: { flex: 1, minHeight: 46, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#171717', borderRadius: 6, shadowColor: '#171717', shadowOpacity: 1, shadowOffset: { width: 3, height: 3 }, shadowRadius: 0 },
   actionStart: { backgroundColor: '#F7D748' },

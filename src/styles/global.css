@@ -968,7 +968,7 @@ select:focus-visible {
   background: transparent;
   cursor: pointer;
   transform-origin: 50% 80%;
-  transition: transform 180ms ease, filter 180ms ease;
+  transition: transform 220ms cubic-bezier(0.18, 0.85, 0.24, 1.08), filter 220ms ease;
   will-change: transform;
   backface-visibility: hidden;
 }
@@ -994,18 +994,21 @@ select:focus-visible {
   object-fit: contain;
 }
 
-.guard-toggle:hover {
-  transform: translateY(-2px) rotate(-2deg);
-  filter: saturate(1.06);
+.guard-toggle:not(:disabled):not(.is-bumping):hover {
+  transform: translateY(-5px) scale(1.045) rotate(-1.5deg);
+  filter: saturate(1.08) brightness(1.03);
 }
 
-.guard-toggle.is-animating {
-  transition: none;
-  pointer-events: none;
+.guard-toggle:not(:disabled):not(.is-bumping):hover img {
+  filter: drop-shadow(4px 7px 0 rgba(23, 23, 23, 0.34));
 }
 
-.guard-toggle.is-animating:hover {
-  transform: none;
+.guard-toggle:not(:disabled):not(.is-bumping):active {
+  transform: translateY(1px) scale(0.985) rotate(0deg);
+}
+
+.guard-toggle.is-bumping {
+  animation: guardBump 2s cubic-bezier(0.18, 0.85, 0.24, 1.08) both;
 }
 
 .guard-toggle:disabled {
@@ -1016,6 +1019,24 @@ select:focus-visible {
 .guard-toggle.is-decorative:disabled {
   cursor: default;
   opacity: 1;
+}
+
+@keyframes guardBump {
+  0% {
+    transform: translateY(0) scale(1) rotate(0deg);
+  }
+  32% {
+    transform: translateY(-10px) scale(1.16) rotate(-2deg);
+  }
+  56% {
+    transform: translateY(10px) scale(1.03, 0.9) rotate(1deg);
+  }
+  76% {
+    transform: translateY(-3px) scale(1.04) rotate(0deg);
+  }
+  100% {
+    transform: translateY(0) scale(1) rotate(0deg);
+  }
 }
 
 .action-btn {

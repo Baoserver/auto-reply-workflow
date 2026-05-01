@@ -9,6 +9,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('pane-layout-changed', listener);
     return () => ipcRenderer.removeListener('pane-layout-changed', listener);
   },
+  onConfigUpdated: (callback: (config: any) => void) => {
+    const listener = (_e: IpcRendererEvent, config: any) => callback(config);
+    ipcRenderer.on('config-updated', listener);
+    return () => ipcRenderer.removeListener('config-updated', listener);
+  },
   removeAgentEventListener: () => {
     ipcRenderer.removeAllListeners('agent-event');
   },

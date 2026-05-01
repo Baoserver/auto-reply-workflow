@@ -388,6 +388,8 @@ async function saveConfigForMobile(config: any) {
     if (agentProcess?.stdin?.writable) {
       agentProcess.stdin.write(JSON.stringify({ action: 'reload_config' }) + '\n');
     }
+    mobileService?.broadcastConfig(config);
+    mainWindow?.webContents.send('config-updated', config);
     return true;
   } catch (e) {
     log(`mobile save config failed: ${e}`);
@@ -579,6 +581,8 @@ ipcMain.handle('save-config', async (_e, config: any) => {
     if (agentProcess?.stdin?.writable) {
       agentProcess.stdin.write(JSON.stringify({ action: 'reload_config' }) + '\n');
     }
+    mobileService?.broadcastConfig(nestedConfig);
+    mainWindow?.webContents.send('config-updated', nestedConfig);
     return true;
   } catch (e) {
     console.error('Failed to save config:', e);
