@@ -9,7 +9,6 @@ const {
   PairingManager,
   MobileControlService,
   sanitizeEvent,
-  summarizeEvents,
 } = require('../dist/electron/mobileControlService.js');
 
 function tempDir() {
@@ -52,26 +51,6 @@ test('EventStore redacts sensitive values and removes events older than seven da
   assert.equal(events[0].data.nested.webhook_url, '[redacted]');
 });
 
-test('summarizeEvents follows the desktop dashboard event counters', () => {
-  const events = [
-    { type: 'vision', ts: '2026-04-29T01:00:00.000Z', data: {} },
-    { type: 'reply', ts: '2026-04-29T01:01:00.000Z', data: {} },
-    { type: 'escalation', ts: '2026-04-29T01:02:00.000Z', data: {} },
-    { type: 'log', ts: '2026-04-29T01:03:00.000Z', data: { message: 'OpenClaw route matched: agent=x' } },
-    { type: 'log', ts: '2026-04-29T01:04:00.000Z', data: { message: 'OpenClaw assistant route matched: agent=y' } },
-  ];
-
-  const stats = summarizeEvents(events, new Date('2026-04-29T12:00:00Z'));
-
-  assert.deepEqual(stats.day, {
-    keywordHits: 1,
-    visionRecognitions: 1,
-    aiReplies: 1,
-    escalations: 1,
-  });
-  assert.equal(stats.total.keywordHits, 1);
-});
-
 test('MobileControlService rejects unauthenticated control requests and accepts paired tokens', async () => {
   const dir = tempDir();
   let started = 0;
@@ -110,6 +89,55 @@ test('MobileControlService rejects unauthenticated control requests and accepts 
     });
     assert.equal(allowed.status, 200);
     assert.equal(started, 1);
+  } finally {
+    await service.stop();
+  }
+});
+
+test('MobileControlService dashboard uses desktop stats only', async () => {
+  const dir = tempDir();
+  const desktopStats = {
+    day: { keywordHits: 1, visionRecognitions: 2, aiReplies: 3, escalations: 4 },
+    month: { keywordHits: 5, visionRecognitions: 6, aiReplies: 7, escalations: 8 },
+    year: { keywordHits: 9, visionRecognitions: 10, aiReplies: 11, escalations: 12 },
+    total: { keywordHits: 13, visionRecognitions: 14, aiReplies: 15, escalations: 16 },
+  };
+  const service = new MobileControlService({
+    userDataPath: dir,
+    host: '127.0.0.1',
+    port: 0,
+    getAgentRunning: () => false,
+    getDashboardStats: () => desktopStats,
+    startAgent: () => {},
+    stopAgent: () => {},
+    runAgentOnce: async () => ({ ok: true }),
+    confirmPendingReply: async () => ({ ok: true }),
+    cancelPendingReply: async () => ({ ok: true }),
+    checkProcess: async () => false,
+    appVersion: '0.1.0',
+  });
+
+  await service.start();
+  const baseUrl = `http://127.0.0.1:${service.port}`;
+  try {
+    service.ingestAgentEvent({ type: 'ocr', data: { new_lines: ['should not count'] } });
+    service.ingestAgentEvent({ type: 'vision', data: {} });
+    service.ingestAgentEvent({ type: 'reply', data: { content: 'ok' } });
+
+    const pair = service.startPairing();
+    const paired = await fetch(`${baseUrl}/api/pair/complete`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: pair.code, deviceName: 'iPhone' }),
+    });
+    const auth = await paired.json();
+
+    const response = await fetch(`${baseUrl}/api/dashboard`, {
+      headers: { authorization: `Bearer ${auth.token}` },
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.deepEqual(body.stats, desktopStats);
   } finally {
     await service.stop();
   }

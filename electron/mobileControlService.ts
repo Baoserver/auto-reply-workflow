@@ -137,26 +137,12 @@ function emptyStats(): DashboardStats {
   return { ...EMPTY_STATS };
 }
 
-function increment(stats: DashboardStats, key: keyof DashboardStats) {
-  stats[key] += 1;
-}
-
-function mergeStats(primary: DashboardStats, fallback: DashboardStats): DashboardStats {
+function emptyStatsStore(): DashboardStatsStore {
   return {
-    keywordHits: primary.keywordHits || fallback.keywordHits,
-    visionRecognitions: primary.visionRecognitions || fallback.visionRecognitions,
-    aiReplies: primary.aiReplies || fallback.aiReplies,
-    escalations: primary.escalations || fallback.escalations,
-  };
-}
-
-function mergeStatsStore(primary: DashboardStatsStore, fallback?: DashboardStatsStore | null): DashboardStatsStore {
-  if (!fallback) return primary;
-  return {
-    day: mergeStats(primary.day, fallback.day),
-    month: mergeStats(primary.month, fallback.month),
-    year: mergeStats(primary.year, fallback.year),
-    total: mergeStats(primary.total, fallback.total),
+    day: emptyStats(),
+    month: emptyStats(),
+    year: emptyStats(),
+    total: emptyStats(),
   };
 }
 
@@ -234,15 +220,6 @@ function isRouteMatchedEvent(event: AgentEvent) {
   return /助手模式命中路由|OpenClaw route matched|route matched/i.test(message);
 }
 
-function counterKeyForEvent(event: AgentEvent): keyof DashboardStats | null {
-  if (isRouteMatchedEvent(event)) return 'keywordHits';
-  if (event.type === 'ocr') return 'visionRecognitions';
-  if (event.type === 'vision') return 'visionRecognitions';
-  if (event.type === 'reply') return 'aiReplies';
-  if (event.type === 'escalation') return 'escalations';
-  return null;
-}
-
 function summarizeConnectionsFromEvents(events: AgentEvent[]) {
   let wechat: boolean | null = null;
   let wecom: boolean | null = null;
@@ -261,42 +238,6 @@ function summarizeConnectionsFromEvents(events: AgentEvent[]) {
     if (wechat !== null && wecom !== null) break;
   }
   return { wechat, wecom };
-}
-
-function dayKey(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function monthKey(date: Date) {
-  return date.toISOString().slice(0, 7);
-}
-
-function yearKey(date: Date) {
-  return date.toISOString().slice(0, 4);
-}
-
-export function summarizeEvents(events: AgentEvent[], now = new Date()): DashboardStatsStore {
-  const stats = {
-    day: emptyStats(),
-    month: emptyStats(),
-    year: emptyStats(),
-    total: emptyStats(),
-  };
-  const currentDay = dayKey(now);
-  const currentMonth = monthKey(now);
-  const currentYear = yearKey(now);
-
-  for (const event of events) {
-    const key = counterKeyForEvent(event);
-    if (!key) continue;
-    const eventDate = new Date(event.ts || Date.now());
-    increment(stats.total, key);
-    if (yearKey(eventDate) === currentYear) increment(stats.year, key);
-    if (monthKey(eventDate) === currentMonth) increment(stats.month, key);
-    if (dayKey(eventDate) === currentDay) increment(stats.day, key);
-  }
-
-  return stats;
 }
 
 export class EventStore {
@@ -333,11 +274,6 @@ export class EventStore {
     }
     const limit = Math.min(Math.max(Number(options.limit) || 100, 1), 500);
     return filtered.slice(-limit);
-  }
-
-  stats(now = new Date()) {
-    this.prune(now);
-    return summarizeEvents(this.events, now);
   }
 
   private prune(now: Date) {
@@ -670,7 +606,7 @@ export class MobileControlService {
           wechat: eventConnections.wechat ?? wechat,
           wecom: eventConnections.wecom ?? wecom,
         },
-        stats: mergeStatsStore(this.eventStore.stats(), desktopStats),
+        stats: desktopStats || emptyStatsStore(),
         config: sanitizeMobileConfig(config || {}),
         pendingReplies: this.listPendingReplies(),
         latestEvents: events.filter((event) => (

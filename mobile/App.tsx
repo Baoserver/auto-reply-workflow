@@ -177,42 +177,6 @@ function isKeyHomeEvent(event: AgentEvent) {
   return event.type === 'vision' || event.type === 'reply' || isRouteMatchedEvent(event);
 }
 
-function statsForEvents(events: AgentEvent[]): Record<StatsRange, DashboardStats> {
-  const next = {
-    day: { ...emptyStats },
-    month: { ...emptyStats },
-    year: { ...emptyStats },
-    total: { ...emptyStats },
-  };
-  const now = new Date();
-  const day = now.toISOString().slice(0, 10);
-  const month = day.slice(0, 7);
-  const year = day.slice(0, 4);
-  events.forEach((event) => {
-    let key: keyof DashboardStats | null = null;
-    if (isRouteMatchedEvent(event)) key = 'keywordHits';
-    if (event.type === 'vision') key = 'visionRecognitions';
-    if (event.type === 'reply') key = 'aiReplies';
-    if (event.type === 'escalation') key = 'escalations';
-    if (!key) return;
-    const eventDay = new Date(event.ts || Date.now()).toISOString().slice(0, 10);
-    next.total[key] += 1;
-    if (eventDay.slice(0, 4) === year) next.year[key] += 1;
-    if (eventDay.slice(0, 7) === month) next.month[key] += 1;
-    if (eventDay === day) next.day[key] += 1;
-  });
-  return next;
-}
-
-function mergeStats(primary: DashboardStats, fallback: DashboardStats): DashboardStats {
-  return {
-    keywordHits: primary.keywordHits || fallback.keywordHits,
-    visionRecognitions: primary.visionRecognitions || fallback.visionRecognitions,
-    aiReplies: primary.aiReplies || fallback.aiReplies,
-    escalations: primary.escalations || fallback.escalations,
-  };
-}
-
 export default function App() {
   const [tab, setTab] = useState<Tab>('home');
   const [serviceUrl, setServiceUrl] = useState('');
@@ -594,8 +558,7 @@ export default function App() {
     }
   };
 
-  const localStats = useMemo(() => statsForEvents(events), [events]);
-  const visibleStats = mergeStats(dashboard.stats?.[range] || emptyStats, localStats[range]);
+  const visibleStats = dashboard.stats?.[range] || emptyStats;
   const visibleEvents = events.filter((event) => matchesFilter(event, filter)).slice().reverse();
   const keyEvents = events.filter(isKeyHomeEvent);
   const latestKeyEvents = keyEvents.slice(-6);
